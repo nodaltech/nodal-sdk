@@ -13,14 +13,17 @@ from flask import Flask, request
 from langchain.agents import create_agent
 
 MAX_CHAINS = 3  # we're only going to research the top 3 C2 chains of each case
-GHOST_CONFIG_INTERVAL = 30.0  # wait at least this long before pulling ghost config again
+GHOST_CONFIG_INTERVAL = (
+    30.0  # wait at least this long before pulling ghost config again
+)
 ANON_PREFIX = "dv_"  # beginning of every anonymous substitute value, so we can find them in AI responses
 ANON_SUFFIX = "c"  # end of every anonymous substitute value, so we can easily replace them in responses
 
 ci = None
 app = Flask(__name__)
-log = logging.getLogger('werkzeug')
+log = logging.getLogger("werkzeug")
 log.setLevel(logging.ERROR)
+
 
 class CaseInvestigator(Thread):
 
@@ -39,14 +42,19 @@ class CaseInvestigator(Thread):
         self.identity_mitigations = None
         self.device_isolations = None
 
-
     def run(self):
-        investigated_cases = set()  # case_id's are added to this so we avoid working them twice
+        investigated_cases = (
+            set()
+        )  # case_id's are added to this so we avoid working them twice
         last_config_pull = None  # track last time we pulled the config from the ghost
-        last_defender_run = None  # track last time we showed our situation to the defender agent
+        last_defender_run = (
+            None  # track last time we showed our situation to the defender agent
+        )
 
         while True:
-            c = self.work.get(block=True)  # no Investigator or Defender activity unless there is a new case
+            c = self.work.get(
+                block=True
+            )  # no Investigator or Defender activity unless there is a new case
             case_id = c["case_id"]
             print("ci got case: " + case_id + " ... ", end="")
 
@@ -61,25 +69,34 @@ class CaseInvestigator(Thread):
                 if case_id in investigated_cases:
                     print("already investigated")
                 else:
-                    print("INVESTIGATING...")
+                    print("INVESTIGATING, has " + str(len(c["events"])) + " events...")
                     self.investigate_case(c)
                     investigated_cases.add(case_id)
+            else:
+                print("no ns_ip or not activity variant...")
 
             # pull the ghost defcon config if it's been a while
-            if last_config_pull is None or last_config_pull + GHOST_CONFIG_INTERVAL < time.time():
+            if (
+                last_config_pull is None
+                or last_config_pull + GHOST_CONFIG_INTERVAL < time.time()
+            ):
                 self.pull_defcon()
                 last_config_pull = time.time()
 
             # prepare a situation dump for the Defender agent and invoke it, if it's time
             if self.agentic_interval_secs > 0:
-                if last_defender_run is None or last_defender_run + self.agentic_interval_secs < time.time():
+                if (
+                    last_defender_run is None
+                    or last_defender_run + self.agentic_interval_secs < time.time()
+                ):
                     print("INVOKING DEFENDER...")
-                    self.invoke_defender(c)  # pass the current case, we can add Defender notes to it
+                    self.invoke_defender(
+                        c
+                    )  # pass the current case, we can add Defender notes to it
                     last_defender_run = time.time()
 
-
     def invoke_defender(self, recent_case):
-        """ Prepare a full situation awareness report for Claude and allow it to ask for mitigations """
+        """Prepare a full situation awareness report for Claude and allow it to ask for mitigations"""
         # clear out the anonymization substitutes from the last time
         self.reset_anons()
 
@@ -167,7 +184,7 @@ class CaseInvestigator(Thread):
         for chain in chains:
             device_ids = chain[0]
             confidence = chain[1]
-            if confidence < .3 or len(device_ids) < 3:
+            if confidence < 0.3 or len(device_ids) < 3:
                 continue
 
             include = False
@@ -182,30 +199,42 @@ class CaseInvestigator(Thread):
                     if i == len(device_ids) - 1:
                         event_text += "(IP " + device_ids[i] + ")"
                     elif i == 0:
-                        event_text += "(device " + self.anonymize(device_ids[i]) + ") <-> "
+                        event_text += (
+                            "(device " + self.anonymize(device_ids[i]) + ") <-> "
+                        )
                     else:
-                        event_text += "(device " + self.anonymize(device_ids[i]) + ") <-> "
-                event_text += ", overall detection confidence " + str(round(confidence, 4)) + "\n"
+                        event_text += (
+                            "(device " + self.anonymize(device_ids[i]) + ") <-> "
+                        )
+                event_text += (
+                    ", overall detection confidence " + str(round(confidence, 4)) + "\n"
+                )
 
         # Add on a narrative about case C2 chains
         event_text += "\nList of possible C2 channels associated with cases:\n"
         for chain in case_chains:
             inf = chain[0]
             confidence = chain[1]
-            if confidence < .2:
+            if confidence < 0.2:
                 continue
 
             for devs in chain[0]:
                 if "External" in devs[0]:
                     event_text += "(IP " + devs[0]["External"] + ")"
                 else:
-                    event_text += "(device " + self.anonymize(devs[0]["Internal"]) + ") <-> "
-            event_text += ", overall detection confidence " + str(round(confidence, 4)) + "\n"
+                    event_text += (
+                        "(device " + self.anonymize(devs[0]["Internal"]) + ") <-> "
+                    )
+            event_text += (
+                ", overall detection confidence " + str(round(confidence, 4)) + "\n"
+            )
 
         question_text = "Here is a report of potentially interesting security events and possible hacker C2 channels, "
         question_text += "from the past several days. Tools are also provided for researching external IP addresses, and "
         question_text += "for blocking a given external IP address from communicating with devices inside the perimeter.\n\n"
-        question_text += "You are only allowed to ask for up to " + str(self.agentic_mitigations_per_interval)
+        question_text += "You are only allowed to ask for up to " + str(
+            self.agentic_mitigations_per_interval
+        )
         question_text += " blocks, so prioritize them and ask for only the ones that are most likely to disrupt an attack."
         question_text += " Don't block an address if isn't involved with a device that appears from the events to be "
         question_text += "used by hackers for lateral movement, exfiltration, or other malicious activities.\n\n"
@@ -216,9 +245,8 @@ class CaseInvestigator(Thread):
         AIMsg3 = self.deanon(self.ask_agent(question_text, self.defender_agent))
         self.add_note(recent_case["case_id"], "Claude defender report: " + str(AIMsg3))
 
-
     def investigate_case(self, c):
-        """ Add macaddress.io, VirusTotal IP lookup, and Claude analyst agent info as notes to case """
+        """Add macaddress.io, VirusTotal IP lookup, and Claude analyst agent info as notes to case"""
         # clear out the anonymization substitutes from the last time
         self.peer_anons = {}
 
@@ -252,14 +280,18 @@ class CaseInvestigator(Thread):
 
         # let's see what Claude thinks of the events + the potential C2 chains + the other info
         question_text = "A device (the Actor) within the company's internal network caused some potential security events.\n"
-        question_text += "Information about the device's mac address (" + macrep + ").\n\n"
+        question_text += (
+            "Information about the device's mac address (" + macrep + ").\n\n"
+        )
         question_text += "The events that triggered this investigation:\n"
         question_text += event_text + "\n\n"
         question_text += "Possible C2 channels into the device were:\n"
         chain_text = self.chains_to_text(c)
         print(chain_text)
         question_text += chain_text + "\n\n"
-        question_text += "VirusTotal IP research about possible C2 channel external hosts:\n"
+        question_text += (
+            "VirusTotal IP research about possible C2 channel external hosts:\n"
+        )
         question_text += vtrep + "\n\n"
         question_text += "\nIn 50 words or fewer, what should be done now?"
         AIMsg2 = self.deanon(self.ask_agent(question_text, self.investigator_agent))
@@ -278,21 +310,21 @@ class CaseInvestigator(Thread):
         # this is the right place to do things only for the most important cases,
         #    and only once per case
 
-
     def ask_agent(self, question_text, agent):
-        """ Send a question to the AI agent and return its answer """
+        """Send a question to the AI agent and return its answer"""
         result = agent.invoke(
             {"messages": [{"role": "user", "content": question_text}]}
         )
         AIMsg = "n/a"
-        last_ai_message = next(m for m in reversed(result["messages"]) if m.type == "ai")
+        last_ai_message = next(
+            m for m in reversed(result["messages"]) if m.type == "ai"
+        )
         if last_ai_message != None:
             AIMsg = last_ai_message.content
         return AIMsg
 
-
     def anonymize(self, peer_key):
-        """ Return the same anonymous string substitute for a given string """
+        """Return the same anonymous string substitute for a given string"""
         peer_sub = self.id_subs.get(peer_key)
         if peer_sub is None:
             peer_sub = ANON_PREFIX + str(len(self.id_subs) + 1) + ANON_SUFFIX
@@ -300,9 +332,8 @@ class CaseInvestigator(Thread):
             self.sub_ids[peer_sub] = peer_key
         return peer_sub
 
-
     def deanon(self, text):
-        """ Replace all anonymous substitutes in the text with the original values """
+        """Replace all anonymous substitutes in the text with the original values"""
         left_text = ""
         right_text = text
         while True:
@@ -312,7 +343,7 @@ class CaseInvestigator(Thread):
             end_ind = right_text.find(ANON_SUFFIX, start_ind + len(ANON_PREFIX))
             if end_ind == -1:
                 break
-            sub = right_text[start_ind:end_ind + 1]
+            sub = right_text[start_ind : end_ind + 1]
             orig = self.sub_ids.get(sub)
             if orig is None:
                 orig = sub
@@ -321,21 +352,19 @@ class CaseInvestigator(Thread):
                 right_text = ""
                 break
             else:
-                right_text = right_text[end_ind + 1:]
+                right_text = right_text[end_ind + 1 :]
         return left_text + right_text
 
-
     def reset_anons(self):
-        """ Reset the anonymization dicts """
+        """Reset the anonymization dicts"""
         self.id_subs = {}
         self.sub_ids = {}
 
-
     def events_to_text(self, case):
-        """ Construct anonymized text narrative out of the list of events of a Case """
+        """Construct anonymized text narrative out of the list of events of a Case"""
         prev_ts = None
         event_text = ""
-        for ev in sorted(case["events"], key=lambda x: x['ts']):
+        for ev in sorted(case["events"], key=lambda x: x["ts"]):
             if prev_ts != None:
                 s = round(ev["ts"] - prev_ts, 3)
                 event_text += str(s) + " seconds later, "
@@ -347,9 +376,13 @@ class CaseInvestigator(Thread):
             else:
                 peer_key = ev["peer"]["Internal"]
             peer_sub = self.anonymize(peer_key)
-            event_text += ev["description"] + " involving " + peer_loc + " device " + peer_sub
+            event_text += (
+                ev["description"] + " involving " + peer_loc + " device " + peer_sub
+            )
             tp = ev["trigger_packet"]["transport"]
-            event_text += " indicated by a packet of size " + str(ev["trigger_packet"]["size"])
+            event_text += " indicated by a packet of size " + str(
+                ev["trigger_packet"]["size"]
+            )
             if "protocol" in tp:
                 event_text += ", protocol " + tp["protocol"]
                 if "src_port" in tp:
@@ -359,9 +392,8 @@ class CaseInvestigator(Thread):
             prev_ts = ev["ts"]
         return event_text
 
-
     def chains_to_text(self, c):
-        """ Construct anonymized text narrative out of the list of possible C2 chains """
+        """Construct anonymized text narrative out of the list of possible C2 chains"""
         chain_text = ""
         chain_count = 0
         for inf in c["inferences"]:
@@ -369,109 +401,113 @@ class CaseInvestigator(Thread):
                 if "External" in devs[0]:
                     chain_text += "(external IP " + devs[0]["External"] + ")"
                 else:
-                    chain_text += "(internal device " + self.anonymize(devs[0]["Internal"]) + ") <-> "
-            chain_text += ", overall detection confidence " + str(round(inf["average"], 4)) + "\n"
+                    chain_text += (
+                        "(internal device "
+                        + self.anonymize(devs[0]["Internal"])
+                        + ") <-> "
+                    )
+            chain_text += (
+                ", overall detection confidence " + str(round(inf["average"], 4)) + "\n"
+            )
             chain_count += 1
             if chain_count == MAX_CHAINS:
                 break
         return chain_text
 
-
     def clean_case(self, case):
-        """ Clean extra data out of Case json that human analyst won't want """
+        """Clean extra data out of Case json that human analyst won't want"""
         c = copy.deepcopy(case)
-        del(c["fabric"])
-        del(c["expiry"])
-        del(c["closed"])
+        del c["fabric"]
+        del c["expiry"]
+        del c["closed"]
         evid = 1
         for ev in c["events"]:
             ev["event_id"] = evid  # replace long guid with short index
             evid += 1
             if "trigger_packet" in ev:
-                del(ev["trigger_packet"]["lifecycle"])
+                del ev["trigger_packet"]["lifecycle"]
         if len(c["inferences"]) > 3:
             c["inferences"] = c["inferences"][0:3]
         for inf in c["inferences"]:
-            del(inf["histogram"])
-            del(inf["inference_id"])
-            del(inf["ts"])
+            del inf["histogram"]
+            del inf["inference_id"]
+            del inf["ts"]
             for ci in range(0, len(inf["c2_chain"])):
                 inf["c2_chain"][ci] = inf["c2_chain"][ci][0]
         return c
 
-
     def pull_defcon(self):
-        """ Fetch ghost defcon config from ghost REST API """
+        """Fetch ghost defcon config from ghost REST API"""
         headers = {
             "Content-Type": "application/json",
-            "Authorization": self.conf["GHOST_APIKEY"]
+            "Authorization": self.conf["GHOST_APIKEY"],
         }
         try:
             url = self.conf["GHOST_URI"] + "/api/config/defcon"
             response = requests.get(url, headers=headers)
-            response.raise_for_status() # Raise an exception for bad status codes (4xx or 5xx)
+            response.raise_for_status()  # Raise an exception for bad status codes (4xx or 5xx)
             rj = response.json()
             self.agentic_interval_secs = rj["agentic_interval_secs"]
-            self.agentic_mitigations_per_interval = rj["agentic_mitigations_per_interval"]
+            self.agentic_mitigations_per_interval = rj[
+                "agentic_mitigations_per_interval"
+            ]
             self.identity_mitigations = rj["identity_mitigations"]
             self.device_isolations = rj["device_isolations"]
         except requests.exceptions.RequestException as e:
             print(f"error fetching defcon: {e}")
 
-
     def ghost_fetch(self, entity, query_string):
-        """ Fetch records from ghost REST API """
+        """Fetch records from ghost REST API"""
         headers = {
             "Content-Type": "application/json",
-            "Authorization": self.conf["GHOST_APIKEY"]
+            "Authorization": self.conf["GHOST_APIKEY"],
         }
         try:
             url = self.conf["GHOST_URI"] + "/api/" + entity + "?" + query_string
             response = requests.get(url, headers=headers)
-            response.raise_for_status() # Raise an exception for bad status codes (4xx or 5xx)
+            response.raise_for_status()  # Raise an exception for bad status codes (4xx or 5xx)
             return response.json()
         except requests.exceptions.RequestException as e:
             print(f"error adding note: {e}")
         return None
 
-
     def add_note(self, case_id, note):
-        """ Add a string as a note on a Case, using ghost REST API """
+        """Add a string as a note on a Case, using ghost REST API"""
         headers = {
             "Content-Type": "application/json",
-            "Authorization": self.conf["GHOST_APIKEY"]
+            "Authorization": self.conf["GHOST_APIKEY"],
         }
         try:
             url = self.conf["GHOST_URI"] + "/api/notes"
-            nd = {"relation": "cases",
-                  "relation_id": case_id,
-                  "note": note,
-                  "metadata": {}}
+            nd = {
+                "relation": "cases",
+                "relation_id": case_id,
+                "note": note,
+                "metadata": {},
+            }
             response = requests.post(url, headers=headers, json=nd)
-            response.raise_for_status() # Raise an exception for bad status codes (4xx or 5xx)
+            response.raise_for_status()  # Raise an exception for bad status codes (4xx or 5xx)
         except requests.exceptions.RequestException as e:
             print(f"error adding note: {e}")
 
-
     def block_external_ip(self, ip_address: str):
-        """ Block an ip address from communicating with any internal device """
+        """Block an ip address from communicating with any internal device"""
         print("!!! Block called for " + ip_address)
 
-
     def get_ip_report(self, ip_address: str) -> str:
-        """ Look up reputation and danger information about an ip address from virus total threat intel """
+        """Look up reputation and danger information about an ip address from virus total threat intel"""
         url = f"https://www.virustotal.com/api/v3/ip_addresses/{ip_address}"
         headers = {
             "accept": "application/json",
-            "x-apikey": self.conf["VIRUSTOTAL_APIKEY"]
+            "x-apikey": self.conf["VIRUSTOTAL_APIKEY"],
         }
         result = ""
         try:
             response = requests.get(url, headers=headers)
             if response.status_code == 200:
-                data = response.json().get('data', {}).get('attributes', {})
-                stats = data.get('last_analysis_stats', {})
-                malicious_count = stats.get('malicious', 0)
+                data = response.json().get("data", {}).get("attributes", {})
+                stats = data.get("last_analysis_stats", {})
+                malicious_count = stats.get("malicious", 0)
                 total_engines = sum(stats.values())
                 result += f"VirusTotal for {ip_address}: "
                 result += f"Country {data.get('country', 'N/A')}, "
@@ -479,7 +515,9 @@ class CaseInvestigator(Thread):
                 result += f"RepScore {data.get('reputation', 0)}, "
                 result += f"MalDetect {malicious_count}/{total_engines}"
             elif response.status_code == 404:
-                result += f"Error: IP address {ip_address} not found in VirusTotal database."
+                result += (
+                    f"Error: IP address {ip_address} not found in VirusTotal database."
+                )
             elif response.status_code == 401:
                 result += "Error: Invalid API key."
             else:
@@ -489,13 +527,12 @@ class CaseInvestigator(Thread):
         print("vt called for " + ip_address)
         return result
 
-
     def get_manufacturer(self, mac):
-        """ Look up manufacturer and other information about a mac from macaddress.io """
+        """Look up manufacturer and other information about a mac from macaddress.io"""
         url = f"https://api.macaddress.io/v1?output=json&search={mac}"
         headers = {
             "accept": "application/json",
-            "X-Authentication-Token": self.conf["MACADDRESS_APIKEY"]
+            "X-Authentication-Token": self.conf["MACADDRESS_APIKEY"],
         }
         result = ""
         try:
@@ -514,7 +551,6 @@ class CaseInvestigator(Thread):
         print("macaddress.io called for " + mac)
         return result
 
-
     def setup(self):
         cf = "CaseInvestigator.yaml"
         if os.path.isfile(cf):
@@ -532,14 +568,10 @@ class CaseInvestigator(Thread):
                 fout.write(
                     'ANTHROPIC_APIKEY: "somekey" # API key for langchain to hit claude\n'
                 )
+                fout.write('VIRUSTOTAL_APIKEY: "somekey" # API key for Virus Total\n')
+                fout.write('MACADDRESS_APIKEY: "somekey" # API key for macaddress.io\n')
                 fout.write(
-                    'VIRUSTOTAL_APIKEY: "somekey" # API key for Virus Total\n'
-                )
-                fout.write(
-                    'MACADDRESS_APIKEY: "somekey" # API key for macaddress.io\n'
-                )
-                fout.write(
-                    'WEBHOOK_LISTEN_PORT: 8090  # port on which to listen for case webhooks\n'
+                    "WEBHOOK_LISTEN_PORT: 8090  # port on which to listen for case webhooks\n"
                 )
             print("wrote config file " + cf + " in local dir, please edit it")
             exit(1)
@@ -547,7 +579,7 @@ class CaseInvestigator(Thread):
         os.environ["ANTHROPIC_API_KEY"] = self.conf["ANTHROPIC_APIKEY"]
         self.investigator_agent = create_agent(
             model="claude-sonnet-4-5-20250929",
-            #tools=[self.get_ip_report],
+            # tools=[self.get_ip_report],
             system_prompt="You are a cyber security analyst investigating recent activity",
         )
         self.defender_agent = create_agent(
@@ -557,14 +589,14 @@ class CaseInvestigator(Thread):
         )
 
 
-@app.route('/case', methods=["POST"])
+@app.route("/case", methods=["POST"])
 def case():
     data = request.get_json()
     ci.work.put(data)
     return {}, 200
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     ci = CaseInvestigator()
     ci.start()
-    app.run(host='0.0.0.0', port=ci.conf["WEBHOOK_LISTEN_PORT"])
+    app.run(host="0.0.0.0", port=ci.conf["WEBHOOK_LISTEN_PORT"])
