@@ -1,0 +1,12 @@
+[build-system]
+requires = ["setuptools", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "nodal-sdk"
+version = "0.1.2"
+description = "Nodal SDK for Cyberbrain integrations"
+authors = [{name = "Nathan", email = "nathan@nodaltechnologies.com"}]
+license = {text = "MIT"}
+readme = "README.md"
+dependencies = [ "zmq", "requests" ]  # Add dependencies here

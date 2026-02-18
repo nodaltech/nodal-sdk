@@ -1,0 +1,4 @@
+pyzmq
+requests
+numpy
+pyyaml
