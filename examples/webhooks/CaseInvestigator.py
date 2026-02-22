@@ -63,7 +63,9 @@ class CaseInvestigator(Thread):
                 print("closed")
                 continue
 
+            invoke_defender = False
             # investigate the case if it's an Activity type and has a NS_IP
+            # also only invoke Network Defender after these types of case happen
             ns_ip = c.get("ns_ip")
             if ns_ip != None and len(ns_ip) > 0 and c["variant"] == "Activity":
                 if case_id in investigated_cases:
@@ -72,8 +74,17 @@ class CaseInvestigator(Thread):
                     print("INVESTIGATING, has " + str(len(c["events"])) + " events...")
                     self.investigate_case(c)
                     investigated_cases.add(case_id)
+                    invoke_defender = True
             else:
                 print("no ns_ip or not activity variant...")
+
+            if not(invoke_defender):
+                continue
+
+            # the rest has to do with Network Defender
+            # sleep a little bit to make sure ghost db is not busy with the case
+            # this is not needed in proper environment where there is a read-only postgresql replica of ghost db
+            time.sleep(15.0)
 
             # pull the ghost defcon config if it's been a while
             if (
