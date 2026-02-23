@@ -479,7 +479,7 @@ class CaseInvestigator(Thread):
             response.raise_for_status()  # Raise an exception for bad status codes (4xx or 5xx)
             return response.json()
         except requests.exceptions.RequestException as e:
-            print(f"error adding note: {e}")
+            print(f"error fetching: {e}")
         return None
 
     def add_note(self, case_id, note):
