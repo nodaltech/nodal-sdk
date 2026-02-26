@@ -262,6 +262,11 @@ class CaseInvestigator(Thread):
         self.peer_anons = {}
 
         case_id = c["case_id"]
+        actor_ip = self.get_actor_ip(c)
+        if actor_ip != None:
+            print("ACTOR IP: " + actor_ip)
+        else:
+            print("ACTOR_IP NOT FOUND")
 
         # get virustotal report, add to case_text, add back to case as note
         vtrep = ""
@@ -424,6 +429,24 @@ class CaseInvestigator(Thread):
             if chain_count == MAX_CHAINS:
                 break
         return chain_text
+
+    def get_actor_ip(self, case):
+        actor_ip = None
+        actor_mac = case["mac"]
+        for ev in case["events"]:
+            tp = ev.get("trigger_packet")
+            if tp != None:
+                if "src_mac" in tp and tp["src_mac"] == actor_mac:
+                    sip = tp.get("src_ip")
+                    if sip != None and len(sip) > 4:
+                        actor_ip = sip
+                        break
+                elif "dest_mac" in tp and tp["dest_mac"] == actor_mac:
+                    dip = tp.get("dest_ip")
+                    if dip != None and len(dip) > 4:
+                        actor_ip = dip
+                        break
+        return actor_ip
 
     def clean_case(self, case):
         """Clean extra data out of Case json that human analyst won't want"""
