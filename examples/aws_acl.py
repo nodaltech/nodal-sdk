@@ -91,8 +91,6 @@ async def main():
                         ):
                             rule_number = entry["RuleNumber"] + 1
 
-# {'mitigation_id': '7616049587240934162', 'mitigator': '*', 'targets': {'IntExtIp': {'int_ip': '10.0.1.12', 'int_ports': [32768], 'ext_ip': '185.125.188.57', 'ext_ports': [443]}}, 'status': 'Requested', 'tag': 'Short', 'case_id': 'f675ae35-af93-4bff-b8f3-9f1b6fae7fb2', 'ts': 1772227513.364715, 'expiry': 1772227813.364715}
-
                 ingress_port_range = {"From": 0, "To": 65535}
                 if conf["SPECIFY_INBOUND_PORT"]:
                     inport = target["int_ports"][0]
@@ -110,16 +108,17 @@ async def main():
                     PortRange=ingress_port_range,
                 )
 
-                # Add outbound deny rule
-                ec2.create_network_acl_entry(
-                    NetworkAclId=conf["AWS_NETWORK_ACL_ID"],
-                    RuleNumber=rule_number,
-                    Protocol="-1",  # All protocols
-                    RuleAction="deny",
-                    Egress=True,
-                    CidrBlock=f"{ext_ip}/32",
-                    PortRange={"From": 0, "To": 65535},
-                )
+                if not(conf["SPECIFY_INBOUND_PORT"]):
+                    # Add outbound deny rule
+                    ec2.create_network_acl_entry(
+                        NetworkAclId=conf["AWS_NETWORK_ACL_ID"],
+                        RuleNumber=rule_number,
+                        Protocol="-1",  # All protocols
+                        RuleAction="deny",
+                        Egress=True,
+                        CidrBlock=f"{ext_ip}/32",
+                        PortRange={"From": 0, "To": 65535},
+                    )
 
                 mitigation.set_enabled()
                 mitigation.set_user_data({"rule_number": rule_number})
