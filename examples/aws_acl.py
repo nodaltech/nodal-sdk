@@ -101,7 +101,7 @@ async def main():
                     ec2.create_network_acl_entry(
                         NetworkAclId=conf["AWS_NETWORK_ACL_ID"],
                         RuleNumber=rule_number,
-                        Protocol="6"
+                        Protocol="6",
                         RuleAction="deny",
                         Egress=False,
                         CidrBlock=f"{ext_ip}/32",
@@ -112,7 +112,7 @@ async def main():
                     ec2.create_network_acl_entry(
                         NetworkAclId=conf["AWS_NETWORK_ACL_ID"],
                         RuleNumber=rule_number,
-                        Protocol="-1"
+                        Protocol="-1",
                         RuleAction="deny",
                         Egress=False,
                         CidrBlock=f"{ext_ip}/32",
