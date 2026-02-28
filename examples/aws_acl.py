@@ -217,6 +217,7 @@ async def main():
                         NetworkAclId=conf["AWS_NETWORK_ACL_ID"],
                         RuleNumber=rule_number + 1,
                         Egress=True,
+                    )
 
                 mitigation.set_disabled()
                 print(f"Successfully removed ACL rules for ALL <-> {ext_ip}")
