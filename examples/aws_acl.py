@@ -96,7 +96,9 @@ async def main():
                     # don't use this setting in prod
                     inport = target["int_ports"][0]
                     ingress_port_range = {"From": inport, "To": inport}
-                    print("set ingress port to " + str(inport))
+                    outport = target["ext_ports"][0]
+                    egress_port_range = {"From": outport, "To": outport}
+                    print("set ingress port " + str(inport) + ", egress port " + str(outport))
                     # Add inbound deny rule for tcp
                     ec2.create_network_acl_entry(
                         NetworkAclId=conf["AWS_NETWORK_ACL_ID"],
@@ -106,6 +108,36 @@ async def main():
                         Egress=False,
                         CidrBlock=f"{ext_ip}/32",
                         PortRange=ingress_port_range
+                    )
+                    # Add outbound deny rule for tcp
+                    ec2.create_network_acl_entry(
+                        NetworkAclId=conf["AWS_NETWORK_ACL_ID"],
+                        RuleNumber=rule_number,
+                        Protocol="6",
+                        RuleAction="deny",
+                        Egress=True,
+                        CidrBlock=f"{ext_ip}/32",
+                        PortRange=egress_port_range
+                    )
+                    # Add inbound deny rule for udp
+                    ec2.create_network_acl_entry(
+                        NetworkAclId=conf["AWS_NETWORK_ACL_ID"],
+                        RuleNumber=rule_number + 1,
+                        Protocol="17",
+                        RuleAction="deny",
+                        Egress=False,
+                        CidrBlock=f"{ext_ip}/32",
+                        PortRange=ingress_port_range
+                    )
+                    # Add outbound deny rule for udp
+                    ec2.create_network_acl_entry(
+                        NetworkAclId=conf["AWS_NETWORK_ACL_ID"],
+                        RuleNumber=rule_number + 1,
+                        Protocol="17",
+                        RuleAction="deny",
+                        Egress=True,
+                        CidrBlock=f"{ext_ip}/32",
+                        PortRange=egress_port_range
                     )
                 else:
                     # Add inbound deny rule
@@ -167,13 +199,24 @@ async def main():
                     Egress=False,
                 )
 
-                if not(conf["SPECIFY_INBOUND_PORT"]):
-                    # Remove outbound rule
+                # Remove outbound rule
+                ec2.delete_network_acl_entry(
+                    NetworkAclId=conf["AWS_NETWORK_ACL_ID"],
+                    RuleNumber=rule_number,
+                    Egress=True,
+                )
+
+                if conf["SPECIFY_INBOUND_PORT"]:
+                    # remove the extra rules (rules were created for both tcp and udp)
                     ec2.delete_network_acl_entry(
                         NetworkAclId=conf["AWS_NETWORK_ACL_ID"],
-                        RuleNumber=rule_number,
-                        Egress=True,
+                        RuleNumber=rule_number + 1,
+                        Egress=False,
                     )
+                    ec2.delete_network_acl_entry(
+                        NetworkAclId=conf["AWS_NETWORK_ACL_ID"],
+                        RuleNumber=rule_number + 1,
+                        Egress=True,
 
                 mitigation.set_disabled()
                 print(f"Successfully removed ACL rules for ALL <-> {ext_ip}")
