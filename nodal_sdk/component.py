@@ -45,6 +45,7 @@ class Component:
             "port": self.port,
             "token": token,
             "public_key": self.curve_public,
+            "connect_as_client": False,
         }
 
         resp = requests.post(handshake_url, json=partial_definition)
