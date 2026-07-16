@@ -275,6 +275,7 @@ The `examples/` directory contains production-ready component implementations:
 
 | Example | Type | Description |
 |---------|------|-------------|
+| `crowdstrike_feeder.py` | Feeder | Stream CrowdStrike Falcon detections in as events |
 | `aws_acl.py` | Mitigator | AWS Network ACL deny rules via boto3 |
 | `meraki_mitigator.py` | Mitigator | Cisco Meraki L3 firewall rules |
 | `local_ufw.py` | Mitigator | Linux UFW route deny rules |
