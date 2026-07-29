@@ -44,7 +44,7 @@ class Mitigation(TypedDict):
 class DeviceKey(TypedDict):
     Internal: NotRequired[str]
     External: NotRequired[str]
-
+    RoutedInternal: NotRequired[str]
 
 class IdentityData(TypedDict):
     name: str
@@ -53,14 +53,16 @@ class IdentityData(TypedDict):
 
 class Event(TypedDict):
     event_id: str
+    hash: NotRequired[int]
+    weight: NotRequired[float]
     device: DeviceKey
+    identity: NotRequired[IdentityData]
     peer: NotRequired[DeviceKey]
     description: str
 
     device_ip: NotRequired[str]
     peer_ip: NotRequired[str]
     trigger_packet: NotRequired[Dict]
-    identity: NotRequired[IdentityData]
     metadata: Dict[str, str]
     ts: float
 

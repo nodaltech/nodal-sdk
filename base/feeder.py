@@ -1,8 +1,10 @@
 import asyncio
 import random
+import json
 
 from nodal_sdk import Feeder
 from nodal_sdk.feeder import EventBuilder
+from nodal_sdk.types import DeviceKey
 
 
 def generate_mac():
@@ -19,17 +21,30 @@ async def main():
     while True:
         should_feed = random.random() > 0.5
 
+        descs = [
+            "Login failed",
+            "Using invalid cert",
+            "Login from new location",
+            "Trying to access forbidden resources",
+        ]
+
+        ips = ["192.168.1.9", "192.168.1.12", "192.168.1.133"]
+
         if should_feed:
-            event = EventBuilder(internal_mac=generate_mac(), desc="acting funny")
-            event.set_internal_peer_ip("192.168.1.244")
+            desc = random.choice(descs)
+            device: DeviceKey = {"Internal": generate_mac()}
+
+            event = EventBuilder(device, desc=desc)
+            event.set_internal_peer_ip(random.choice(ips))
             event.set_metadata({"danger": "lowkey"})
             event.set_identity("nathan", "hubspot")
+            event.hash_bucket(desc, device)
 
             print(event.get_data())
 
             feeder.send("event", event.get_data())
 
-        await asyncio.sleep(1)
+        await asyncio.sleep(0.3)
 
 
 if __name__ == "__main__":
