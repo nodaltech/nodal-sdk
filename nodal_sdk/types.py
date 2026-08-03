@@ -13,6 +13,10 @@ class IntExtIpMitigation(TypedDict):
     ext_ports: List[int]
 
 
+class MacMitigation(TypedDict):
+    mac: str
+
+
 class IsolationMitigation(TypedDict):
     ip: str
     mac: str
@@ -22,11 +26,17 @@ class DomainMitigation(TypedDict):
     fqdn: str
 
 
+class IdentityMitigation(TypedDict):
+    identity: IdentityData
+
+
 class MitigationType(TypedDict):
     GlobalIp: GlobalIpMitigation
     IntExtIp: IntExtIpMitigation
+    Mac: MacMitigation
     Isolation: IsolationMitigation
     Domain: DomainMitigation
+    Identity: IdentityMitigation
 
 
 class Mitigation(TypedDict):
@@ -45,6 +55,7 @@ class DeviceKey(TypedDict):
     Internal: NotRequired[str]
     External: NotRequired[str]
     RoutedInternal: NotRequired[str]
+
 
 class IdentityData(TypedDict):
     name: str

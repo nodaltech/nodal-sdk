@@ -50,7 +50,7 @@ async def main():
                 'AWS_SECRET_ACCESS_KEY: ""  # Replace with your AWS secret key\n'
             )
             fout.write(
-                'SPECIFY_INBOUND_PORT: false  # Set true to block specific internal port TESTING ONLY\n'
+                "SPECIFY_INBOUND_PORT: false  # Set true to block specific internal port TESTING ONLY\n"
             )
         print("wrote config file " + cf + " in local dir, please edit it")
         exit(1)
@@ -98,7 +98,12 @@ async def main():
                     ingress_port_range = {"From": inport, "To": inport}
                     outport = target["ext_ports"][0]
                     egress_port_range = {"From": outport, "To": outport}
-                    print("set ingress port " + str(inport) + ", egress port " + str(outport))
+                    print(
+                        "set ingress port "
+                        + str(inport)
+                        + ", egress port "
+                        + str(outport)
+                    )
                     # Add inbound deny rule for tcp
                     ec2.create_network_acl_entry(
                         NetworkAclId=conf["AWS_NETWORK_ACL_ID"],
@@ -107,7 +112,7 @@ async def main():
                         RuleAction="deny",
                         Egress=False,
                         CidrBlock=f"{ext_ip}/32",
-                        PortRange=ingress_port_range
+                        PortRange=ingress_port_range,
                     )
                     # Add outbound deny rule for tcp
                     ec2.create_network_acl_entry(
@@ -117,7 +122,7 @@ async def main():
                         RuleAction="deny",
                         Egress=True,
                         CidrBlock=f"{ext_ip}/32",
-                        PortRange=egress_port_range
+                        PortRange=egress_port_range,
                     )
                     # Add inbound deny rule for udp
                     ec2.create_network_acl_entry(
@@ -127,7 +132,7 @@ async def main():
                         RuleAction="deny",
                         Egress=False,
                         CidrBlock=f"{ext_ip}/32",
-                        PortRange=ingress_port_range
+                        PortRange=ingress_port_range,
                     )
                     # Add outbound deny rule for udp
                     ec2.create_network_acl_entry(
@@ -137,7 +142,7 @@ async def main():
                         RuleAction="deny",
                         Egress=True,
                         CidrBlock=f"{ext_ip}/32",
-                        PortRange=egress_port_range
+                        PortRange=egress_port_range,
                     )
                 else:
                     # Add inbound deny rule
@@ -148,7 +153,7 @@ async def main():
                         RuleAction="deny",
                         Egress=False,
                         CidrBlock=f"{ext_ip}/32",
-                        PortRange={"From": 0, "To": 65535}
+                        PortRange={"From": 0, "To": 65535},
                     )
                     # Add outbound deny rule
                     ec2.create_network_acl_entry(

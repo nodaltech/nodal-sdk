@@ -8,6 +8,7 @@ import zmq
 from nodal_sdk.component import Component
 from nodal_sdk.types import DeviceKey, Event
 
+
 class EventBuilder:
     event: Event
 
@@ -51,10 +52,11 @@ class EventBuilder:
 
     The more you hash, the larger the area of effect on Nodal's case triggering.
     """
+
     def hash_bucket(self, *args):
         hash_data = json.dumps([*args])
         hash_value = ctypes.c_size_t(hash(hash_data)).value
-        self.event['hash'] = hash_value
+        self.event["hash"] = hash_value
 
     """
     This controls the influence of each individual event on Nodal case triggering.
@@ -63,9 +65,10 @@ class EventBuilder:
 
     Low-signal / noisy events should be given a low weight.
     """
+
     def weight(self, weight: float):
         assert weight >= 0 and weight <= 1
-        self.event['weight'] = weight
+        self.event["weight"] = weight
 
     def get_data(self) -> Event:
         return self.event

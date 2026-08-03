@@ -1,7 +1,5 @@
 import asyncio
 import random
-import json
-
 from nodal_sdk import Feeder
 from nodal_sdk.feeder import EventBuilder
 from nodal_sdk.types import DeviceKey
