@@ -17,8 +17,6 @@ async def main():
     await feeder.register("127.0.0.1", ghost_uri, token)
 
     while True:
-        should_feed = random.random() > 0.5
-
         descs = [
             "Login failed",
             "Using invalid cert",
@@ -28,21 +26,20 @@ async def main():
 
         ips = ["192.168.1.9", "192.168.1.12", "192.168.1.133"]
 
-        if should_feed:
-            desc = random.choice(descs)
-            device: DeviceKey = {"Internal": generate_mac()}
+        desc = random.choice(descs)
+        device: DeviceKey = {"Internal": generate_mac()}
 
-            event = EventBuilder(device, desc=desc)
-            event.set_internal_peer_ip(random.choice(ips))
-            event.set_metadata({"danger": "lowkey"})
-            event.set_identity("nathan", "hubspot")
-            event.hash_bucket(desc, device)
+        event = EventBuilder(device, desc=desc)
+        event.set_internal_peer_ip(random.choice(ips))
+        event.set_metadata({"danger": "lowkey"})
+        event.set_identity("nathan", "hubspot")
+        event.hash_bucket(desc, device)
 
-            print(event.get_data())
+        print(event.get_data())
 
-            feeder.send("event", event.get_data())
+        feeder.send("event", event.get_data())
 
-        await asyncio.sleep(0.3)
+        await asyncio.sleep(10)
 
 
 if __name__ == "__main__":
