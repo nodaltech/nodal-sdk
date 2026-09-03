@@ -1,0 +1,51 @@
+# ---- Nodal component ----
+COMPONENT_NAME: "office365" # Component name configured in your ghost
+COMPONENT_TOKEN: "" # Component token configured in your ghost
+COMPONENT_IP: "127.0.0.1" # Addr where brain can reach this component
+LISTEN_PORT: 4002  # Port for brain to connect to this component on
+GHOST_URL: "http://localhost:8080/api/components/handshake" # usually https://<ghost fqdn>/api/components/handshake
+
+# ---- Entra app registration ----
+# Needs the Office 365 Management APIs application permission ActivityFeed.Read,
+# with admin consent granted.
+TENANT_ID: "" # Directory (tenant) ID
+CLIENT_ID: "" # Application (client) ID
+CLIENT_SECRET: "" # Client secret value
+
+# ---- Webhook receiver ----
+# WEBHOOK_URL is the public HTTPS address nginx exposes; Microsoft will POST
+# there and requires a valid, publicly trusted certificate.
+WEBHOOK_URL: "https://o365-feed.example.com/webhook/o365"
+WEBHOOK_PATH: "/webhook/o365" # Local path nginx proxies to
+WEBHOOK_HOST: "127.0.0.1" # Bind address, keep on loopback behind nginx
+WEBHOOK_PORT: 8099 # Bind port nginx proxies to
+WEBHOOK_AUTH_ID: "" # Shared secret Microsoft echoes back in Authorization (any random uuid)
+REQUIRE_AUTH_ID: true # Reject notifications whose Authorization does not match
+
+# ---- Feed behaviour ----
+CONTENT_TYPES: # Audit.AzureActiveDirectory -> logins, Audit.SharePoint -> downloads
+  - "Audit.AzureActiveDirectory"
+  - "Audit.SharePoint"
+ONEDRIVE_ONLY: true # Ignore download events from SharePoint sites (keep OneDrive only)
+SUBSCRIBE_INTERVAL_SECS: 300 # How often to check/repair subscriptions
+CONTENT_WORKERS: 2 # Threads fetching content blobs
+
+# Any IP outside these ranges is treated as External; addresses inside them are
+# treated as RoutedInternal (internal, but no MAC is knowable from a cloud log).
+INTERNAL_CIDRS:
+  - "10.0.0.0/8"
+  - "172.16.0.0/12"
+  - "192.168.0.0/16"
+  - "100.64.0.0/10"
+  - "127.0.0.0/8"
+  - "169.254.0.0/16"
+  - "fc00::/7"
+  - "fe80::/10"
+  - "::1/128"
+
+# Per-event influence on Brain's case triggering, 0.0 - 1.0
+WEIGHTS:
+  entra_signin_success: 0.05
+  entra_signin_failed: 0.35
+  file_download: 0.25
+  file_sync_download: 0.15

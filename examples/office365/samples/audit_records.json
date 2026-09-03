@@ -1,0 +1,105 @@
+[
+  {
+    "Id": "3a2e0b0e-1111-4a5f-9c9d-000000000001",
+    "RecordType": 15,
+    "CreationTime": "2026-09-01T14:22:03",
+    "Operation": "UserLoggedIn",
+    "OrganizationId": "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+    "UserType": 0,
+    "UserKey": "10037FFE8B1A2C4D",
+    "Workload": "AzureActiveDirectory",
+    "ResultStatus": "Success",
+    "ObjectId": "00000003-0000-0ff1-ce00-000000000000",
+    "UserId": "alice@corp.example.com",
+    "ClientIP": "203.0.113.44",
+    "ApplicationId": "00000003-0000-0ff1-ce00-000000000000",
+    "ExtendedProperties": [
+      { "Name": "RequestType", "Value": "OAuth2:Authorize" },
+      { "Name": "ResultStatusDetail", "Value": "Success" },
+      { "Name": "UserAgent", "Value": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)" }
+    ],
+    "DeviceProperties": [
+      { "Name": "OS", "Value": "Windows 10" },
+      { "Name": "BrowserType", "Value": "Edge" },
+      { "Name": "IsCompliant", "Value": "True" },
+      { "Name": "TrustType", "Value": "Azure AD joined" }
+    ]
+  },
+  {
+    "Id": "3a2e0b0e-1111-4a5f-9c9d-000000000002",
+    "RecordType": 15,
+    "CreationTime": "2026-09-01T14:23:41.812",
+    "Operation": "UserLoginFailed",
+    "Workload": "AzureActiveDirectory",
+    "ResultStatus": "Failed",
+    "UserId": "bob@corp.example.com",
+    "ClientIP": "198.51.100.7:51234",
+    "LogonError": "InvalidUserNameOrPassword",
+    "ApplicationId": "00000002-0000-0ff1-ce00-000000000000",
+    "ExtendedProperties": [
+      { "Name": "ErrorNumber", "Value": "50126" },
+      { "Name": "ResultStatusDetail", "Value": "Redirect" },
+      { "Name": "RequestType", "Value": "Login:login" },
+      { "Name": "UserAgent", "Value": "python-requests/2.32" }
+    ]
+  },
+  {
+    "Id": "3a2e0b0e-1111-4a5f-9c9d-000000000003",
+    "RecordType": 6,
+    "CreationTime": "2026-09-01T14:30:00",
+    "Operation": "FileDownloaded",
+    "Workload": "OneDrive",
+    "UserId": "bob@corp.example.com",
+    "ClientIP": "192.168.40.19",
+    "UserAgent": "OneDriveSync/25.1",
+    "SiteUrl": "https://corp-my.sharepoint.com/personal/bob_corp_example_com/",
+    "SourceFileName": "customer-list-q3.xlsx",
+    "SourceFileExtension": "xlsx",
+    "SourceRelativeUrl": "Documents/Finance",
+    "ObjectSizeInBytes": 918273,
+    "AuthenticationType": "Modern",
+    "ObjectId": "https://corp-my.sharepoint.com/personal/bob_corp_example_com/Documents/Finance/customer-list-q3.xlsx"
+  },
+  {
+    "Id": "3a2e0b0e-1111-4a5f-9c9d-000000000004",
+    "RecordType": 6,
+    "CreationTime": "2026-09-01T14:31:10",
+    "Operation": "FileDownloaded",
+    "Workload": "SharePoint",
+    "UserId": "carol@corp.example.com",
+    "ClientIP": "[2001:db8::20a]:443",
+    "SourceFileName": "handbook.pdf",
+    "SourceRelativeUrl": "Shared Documents/HR",
+    "SiteUrl": "https://corp.sharepoint.com/sites/hr/"
+  },
+  {
+    "Id": "3a2e0b0e-1111-4a5f-9c9d-000000000005",
+    "RecordType": 6,
+    "CreationTime": "2026-09-01T14:32:00",
+    "Operation": "FileSyncDownloadedFull",
+    "Workload": "OneDrive",
+    "UserId": "dave@corp.example.com",
+    "ClientIP": "10.12.4.88",
+    "SourceFileName": "archive.zip",
+    "SourceRelativeUrl": "Documents",
+    "ObjectSizeInBytes": 44032000
+  },
+  {
+    "Id": "3a2e0b0e-1111-4a5f-9c9d-000000000006",
+    "CreationTime": "2026-09-01T14:33:00",
+    "Operation": "FileAccessed",
+    "Workload": "OneDrive",
+    "UserId": "dave@corp.example.com",
+    "ClientIP": "10.12.4.88",
+    "SourceFileName": "notes.txt"
+  },
+  {
+    "Id": "3a2e0b0e-1111-4a5f-9c9d-000000000007",
+    "CreationTime": "2026-09-01T14:34:00",
+    "Operation": "UserLoggedIn",
+    "Workload": "AzureActiveDirectory",
+    "ResultStatus": "Success",
+    "UserId": "svc-backup@corp.example.com",
+    "ClientIP": ""
+  }
+]

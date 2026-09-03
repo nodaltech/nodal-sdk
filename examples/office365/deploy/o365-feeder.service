@@ -1,0 +1,40 @@
+# systemd unit for the Office 365 Nodal feeder.
+#
+#   sudo cp deploy/o365-feeder.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now o365-feeder
+#   journalctl -u o365-feeder -f
+
+[Unit]
+Description=Office 365 Nodal feeder
+Documentation=https://nodaltechnologies.com
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=nodal
+Group=nodal
+WorkingDirectory=/opt/o365-feeder
+# the config file holds a client secret and the webhook shared secret
+UMask=0077
+Environment=PYTHONUNBUFFERED=1
+# The SDK derives hash buckets from Python's str hash, which is salted per
+# process - pinning the seed keeps event bucketing stable across restarts.
+Environment=PYTHONHASHSEED=0
+ExecStart=/opt/o365-feeder/venv/bin/python /opt/o365-feeder/o365_feeder.py
+Restart=always
+RestartSec=10
+
+# the feeder only needs to reach Microsoft, ghost and brain
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/o365-feeder
+ProtectKernelTunables=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+
+[Install]
+WantedBy=multi-user.target
