@@ -26,6 +26,17 @@ class DomainMitigation(TypedDict):
     fqdn: str
 
 
+class DeviceKey(TypedDict):
+    Internal: NotRequired[str]
+    External: NotRequired[str]
+    RoutedInternal: NotRequired[str]
+
+
+class IdentityData(TypedDict):
+    name: str
+    source: str
+
+
 class IdentityMitigation(TypedDict):
     identity: IdentityData
 
@@ -49,17 +60,6 @@ class Mitigation(TypedDict):
     case_id: str | None
     ts: float
     expiry: float
-
-
-class DeviceKey(TypedDict):
-    Internal: NotRequired[str]
-    External: NotRequired[str]
-    RoutedInternal: NotRequired[str]
-
-
-class IdentityData(TypedDict):
-    name: str
-    source: str
 
 
 class Event(TypedDict):
