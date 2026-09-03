@@ -19,8 +19,8 @@ WEBHOOK_URL: "https://o365-feed.example.com/webhook/o365"
 WEBHOOK_PATH: "/webhook/o365" # Local path nginx proxies to
 WEBHOOK_HOST: "127.0.0.1" # Bind address, keep on loopback behind nginx
 WEBHOOK_PORT: 8099 # Bind port nginx proxies to
-WEBHOOK_AUTH_ID: "" # Shared secret Microsoft echoes back in Authorization (any random uuid)
-REQUIRE_AUTH_ID: true # Reject notifications whose Authorization does not match
+WEBHOOK_AUTH_ID: "" # Shared secret Microsoft echoes back in Webhook-AuthID (any random uuid)
+REQUIRE_AUTH_ID: true # Reject notifications whose Webhook-AuthID does not match
 
 # ---- Feed behaviour ----
 CONTENT_TYPES: # Audit.AzureActiveDirectory -> logins, Audit.SharePoint -> downloads

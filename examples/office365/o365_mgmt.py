@@ -197,7 +197,9 @@ class Office365ManagementClient:
 
         If a webhook is supplied, Microsoft POSTs a validation notification to it
         *during this call* and expects a 200 within 5 seconds - the webserver has
-        to already be reachable at `webhook_url` before this is called.
+        to already be reachable at `webhook_url` before this is called. The
+        `auth_id` is what the service will send back as the Webhook-AuthID
+        header, on that validation POST and on every later notification.
         """
         body = None
         if webhook_url:
@@ -234,8 +236,10 @@ class Office365ManagementClient:
         """
         Bring every requested content type to "subscribed, webhook enabled".
 
-        Returns the (content_type, action) pairs that needed doing, so the caller
-        can log only real changes.
+        Returns the (content_type, action) pairs that were carried out, so the
+        caller can log only real changes. A content type whose start call fails
+        is logged and skipped; the rest are still brought up, and the next pass
+        retries it.
         """
         subs = {}
         for sub in self.list_subscriptions():
@@ -267,16 +271,23 @@ class Office365ManagementClient:
             else:
                 continue
 
-            if action == "readdress":
-                log.warning(
-                    "%s webhook registered as %s, restarting it as %s",
-                    content_type,
-                    webhook.get("address"),
-                    webhook_url,
-                )
-                self.stop_subscription(content_type)
+            try:
+                if action == "readdress":
+                    log.warning(
+                        "%s webhook registered as %s, restarting it as %s",
+                        content_type,
+                        webhook.get("address"),
+                        webhook_url,
+                    )
+                    self.stop_subscription(content_type)
 
-            self.start_subscription(content_type, webhook_url, auth_id)
+                self.start_subscription(content_type, webhook_url, auth_id)
+            except Office365Error as e:
+                # one content type failing is not a reason to leave the others
+                # unsubscribed, so log it and carry on to the next
+                log.error("subscription %s (%s) failed: %s", content_type, action, e)
+                continue
+
             log.info("subscription %s: %s", content_type, action)
             actions.append((content_type, action))
 

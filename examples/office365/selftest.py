@@ -69,7 +69,10 @@ class FakeManagementApi:
                 resp = rq.post(
                     webhook["address"],
                     json={"validationCode": "abc-123"},
-                    headers={"Authorization": webhook.get("authId", "")},
+                    headers={
+                        "Webhook-AuthID": webhook.get("authId", ""),
+                        "Webhook-ValidationCode": "abc-123",
+                    },
                     timeout=5,
                 )
                 self.validations.append((content_type, resp.status_code, resp.text.strip()))
@@ -182,11 +185,23 @@ def main() -> int:
             "contentUri": f"http://127.0.0.1:{FAKE_PORT}/api/v1.0/{TENANT}/activity/feed/audit/notif-1",
         }
     ]
-    bad = rq.post(WEBHOOK_URL, json=notification, headers={"Authorization": "wrong"}, timeout=5)
-    check("bad Authorization rejected", bad.status_code == 401, str(bad.status_code))
+    bad = rq.post(WEBHOOK_URL, json=notification, headers={"Webhook-AuthID": "wrong"}, timeout=5)
+    check("bad Webhook-AuthID rejected", bad.status_code == 401, str(bad.status_code))
 
-    good = rq.post(WEBHOOK_URL, json=notification, headers={"Authorization": AUTH_ID}, timeout=5)
-    check("good Authorization accepted", good.status_code == 200, str(good.status_code))
+    none = rq.post(WEBHOOK_URL, json=notification, timeout=5)
+    check("missing Webhook-AuthID rejected", none.status_code == 401, str(none.status_code))
+
+    good = rq.post(WEBHOOK_URL, json=notification, headers={"Webhook-AuthID": AUTH_ID}, timeout=5)
+    check("good Webhook-AuthID accepted", good.status_code == 200, str(good.status_code))
+
+    # accepted as a fallback, for proxies that move the value to Authorization
+    alt = rq.post(
+        WEBHOOK_URL,
+        json=notification,
+        headers={"Authorization": f"Bearer {AUTH_ID}"},
+        timeout=5,
+    )
+    check("Authorization fallback accepted", alt.status_code == 200, str(alt.status_code))
 
     print("\nevents")
     events = drain(feed.events, 5.0)
@@ -211,7 +226,7 @@ def main() -> int:
     )
 
     print("\ndeduplication")
-    rq.post(WEBHOOK_URL, json=notification, headers={"Authorization": AUTH_ID}, timeout=5)
+    rq.post(WEBHOOK_URL, json=notification, headers={"Webhook-AuthID": AUTH_ID}, timeout=5)
     check("repeat notification produced nothing", len(drain(feed.events, 3.0)) == 0)
 
     print("\nsubscription repair")

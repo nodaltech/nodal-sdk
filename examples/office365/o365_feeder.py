@@ -49,6 +49,10 @@ CONFIG_FILE = "o365_feeder.yaml"
 # how many times a content blob is retried before it is given up on
 MAX_BLOB_ATTEMPTS = 3
 
+# where the subscription's authId shows up on an incoming notification; the
+# service uses the first, the second is only there for proxies that rewrite it
+AUTH_HEADERS = ("Webhook-AuthID", "Authorization")
+
 CONFIG_TEMPLATE = """\
 # ---- Nodal component ----
 COMPONENT_NAME: "office365" # Component name configured in your ghost
@@ -71,8 +75,8 @@ WEBHOOK_URL: "https://o365-feed.example.com/webhook/o365"
 WEBHOOK_PATH: "/webhook/o365" # Local path nginx proxies to
 WEBHOOK_HOST: "127.0.0.1" # Bind address, keep on loopback behind nginx
 WEBHOOK_PORT: 8099 # Bind port nginx proxies to
-WEBHOOK_AUTH_ID: "%(auth_id)s" # Shared secret Microsoft echoes back in Authorization
-REQUIRE_AUTH_ID: true # Reject notifications whose Authorization does not match
+WEBHOOK_AUTH_ID: "%(auth_id)s" # Shared secret Microsoft echoes back in Webhook-AuthID
+REQUIRE_AUTH_ID: true # Reject notifications whose Webhook-AuthID does not match
 
 # ---- Feed behaviour ----
 CONTENT_TYPES: # Audit.AzureActiveDirectory -> logins, Audit.SharePoint -> downloads
@@ -191,13 +195,26 @@ class O365Feed:
 
     # ---------------------------------------------------------------- ingress
 
-    def authorized(self, header: Optional[str]) -> bool:
+    def authorized(self, headers: Any) -> bool:
+        """
+        Microsoft identifies itself with the authId recorded at subscription
+        start. It travels in the Webhook-AuthID header, on the validation POST
+        and on every notification - not in Authorization, which the service
+        never sets. Authorization is still accepted, for proxies or test rigs
+        that move the value there.
+        """
         if not self.require_auth_id or not self.auth_id:
             return True
-        supplied = (header or "").strip()
-        if supplied.lower().startswith("bearer "):
-            supplied = supplied[7:].strip()
-        return hmac.compare_digest(supplied, self.auth_id)
+
+        for name in AUTH_HEADERS:
+            supplied = (headers.get(name) or "").strip()
+            if supplied.lower().startswith("bearer "):
+                supplied = supplied[7:].strip()
+            if supplied and hmac.compare_digest(
+                supplied.encode("utf-8"), self.auth_id.encode("utf-8")
+            ):
+                return True
+        return False
 
     def queue_notification(self, payload: Any) -> int:
         """Queue the blobs referenced by one notification body. Returns how many."""
@@ -229,20 +246,28 @@ class O365Feed:
 
         @app.route(self.webhook_path, methods=["POST"])
         def webhook():
-            if not self.authorized(request.headers.get("Authorization")):
-                log.warning("rejected notification with bad Authorization header")
+            if not self.authorized(request.headers):
+                seen = [h for h in AUTH_HEADERS if h in request.headers]
+                log.warning(
+                    "rejected notification with bad auth id (auth headers present: %s)",
+                    ", ".join(seen) or "none",
+                )
                 return jsonify({"error": "unauthorized"}), 401
 
             payload = request.get_json(force=True, silent=True)
-            if payload is None:
-                return jsonify({"error": "expected json"}), 400
 
-            # Subscription handshake: Microsoft POSTs a validationCode when a
-            # webhook is (re)started and wants a 200 within 5 seconds.
-            if isinstance(payload, dict) and "validationCode" in payload:
-                code = payload["validationCode"]
+            # Subscription handshake: Microsoft POSTs a validation code, both as
+            # the Webhook-ValidationCode header and in the body, when a webhook
+            # is (re)started. It only wants a 200, within 5 seconds.
+            code = request.headers.get("Webhook-ValidationCode")
+            if code is None and isinstance(payload, dict):
+                code = payload.get("validationCode")
+            if code is not None:
                 log.info("answered webhook validation handshake")
                 return jsonify({"validationCode": code}), 200
+
+            if payload is None:
+                return jsonify({"error": "expected json"}), 400
 
             queued = self.queue_notification(payload)
             log.debug("notification queued %d blob(s)", queued)

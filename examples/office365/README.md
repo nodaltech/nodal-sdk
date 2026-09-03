@@ -112,7 +112,7 @@ most:
 | `TENANT_ID` / `CLIENT_ID` / `CLIENT_SECRET` | From step 1 |
 | `WEBHOOK_URL` | The **public HTTPS** URL nginx serves, e.g. `https://o365-feed.example.com/webhook/o365` |
 | `WEBHOOK_PATH` / `WEBHOOK_HOST` / `WEBHOOK_PORT` | Local bind, keep on loopback behind nginx |
-| `WEBHOOK_AUTH_ID` | Random secret. Microsoft returns it in the `Authorization` header of every notification; the feeder rejects anything else |
+| `WEBHOOK_AUTH_ID` | Random secret. Microsoft sends it back as the `Webhook-AuthID` header on the validation POST and on every notification; the feeder rejects anything else |
 | `INTERNAL_CIDRS` | Which client IPs count as internal (see *Device keying*) |
 
 The config file holds two secrets — keep it `chmod 600` and owned by the service
@@ -245,7 +245,9 @@ volume and content before wiring it up.
 | Symptom | Cause |
 |---------|-------|
 | `subscription ...: start` repeats every cycle | The validation POST is not reaching the feeder. Check `WEBHOOK_URL` against nginx's `server_name`/location, and the certificate chain |
-| `rejected notification with bad Authorization header` | `WEBHOOK_AUTH_ID` changed after the subscription was created. Microsoft echoes the value recorded at subscription start; the feeder restarts the subscription when it notices the address or authId drifting, so this should clear itself within one `SUBSCRIBE_INTERVAL_SECS` |
+| `AF20021 ... validation failed` alongside `rejected notification with bad auth id` | The validation POST arrived but the feeder answered 401, so Microsoft refused to create the subscription. The auth id it sends is the one recorded at subscription start, in the `Webhook-AuthID` header |
+| `AF20021` with nothing logged by the feeder | The POST never landed: DNS, nginx location, or a certificate Microsoft does not trust. Note that Microsoft throttles repeat `/subscriptions/start` calls for the same content type to one per 15 minutes |
+| `rejected notification with bad auth id` | `WEBHOOK_AUTH_ID` changed after the subscription was created. Microsoft echoes the value recorded at subscription start; the feeder restarts the subscription when it notices the address or authId drifting, so this should clear itself within one `SUBSCRIBE_INTERVAL_SECS`. If it does not, check that nothing between nginx and the feeder strips the `Webhook-AuthID` header |
 | `token request failed 401` | Wrong client secret, or admin consent for `ActivityFeed.Read` was never granted |
 | Subscriptions fine, no events | Normal for the first few minutes. If it persists, check `/healthz`: `records` climbing with `events` flat means the operations are being filtered — most often `ONEDRIVE_ONLY` dropping SharePoint downloads |
 | `giving up on content ...` | The content blob could not be fetched after retries and its records are gone from this feed. Look for the Microsoft-side error just above it; the records are still in the unified audit log |
