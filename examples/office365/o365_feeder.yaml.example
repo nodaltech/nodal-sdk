@@ -6,46 +6,41 @@ LISTEN_PORT: 4002  # Port for brain to connect to this component on
 GHOST_URL: "http://localhost:8080/api/components/handshake" # usually https://<ghost fqdn>/api/components/handshake
 
 # ---- Entra app registration ----
-# Needs the Office 365 Management APIs application permission ActivityFeed.Read,
-# with admin consent granted.
+# Needs the Microsoft Graph *application* permissions Files.Read.All (or
+# Sites.Read.All) and User.Read.All, with admin consent granted.
 TENANT_ID: "" # Directory (tenant) ID
 CLIENT_ID: "" # Application (client) ID
 CLIENT_SECRET: "" # Client secret value
 
-# ---- Webhook receiver ----
-# WEBHOOK_URL is the public HTTPS address nginx exposes; Microsoft will POST
-# there and requires a valid, publicly trusted certificate.
-WEBHOOK_URL: "https://o365-feed.example.com/webhook/o365"
-WEBHOOK_PATH: "/webhook/o365" # Local path nginx proxies to
-WEBHOOK_HOST: "127.0.0.1" # Bind address, keep on loopback behind nginx
-WEBHOOK_PORT: 8099 # Bind port nginx proxies to
-WEBHOOK_AUTH_ID: "" # Shared secret Microsoft echoes back in Webhook-AuthID (any random uuid)
-REQUIRE_AUTH_ID: true # Reject notifications whose Webhook-AuthID does not match
+# ---- What to watch ----
+# "*" means everything. On a large tenant that is a lot of drives to sweep every
+# POLL_INTERVAL_SECS, so MAX_DRIVES is the brake - see the README on cost.
+WATCH_USERS: # OneDrive: list of UPNs, or ["*"], or [] for none
+  - "*"
+WATCH_SITES: [] # SharePoint: list of site ids/paths, or ["*"], or [] for none
+MAX_DRIVES: 200 # Ceiling on how many drives get polled
 
-# ---- Feed behaviour ----
-CONTENT_TYPES: # Audit.AzureActiveDirectory -> logins, Audit.SharePoint -> downloads
-  - "Audit.AzureActiveDirectory"
-  - "Audit.SharePoint"
-ONEDRIVE_ONLY: true # Ignore download events from SharePoint sites (keep OneDrive only)
-SUBSCRIBE_INTERVAL_SECS: 300 # How often to check/repair subscriptions
-CONTENT_WORKERS: 2 # Threads fetching content blobs
+# ---- Device attribution ----
+# Graph reports no client address for file activity, so there is no real device
+# to key these events on - the actor's identity is the key that means anything.
+# Brain needs a device regardless, so this address is attached to every emitted
+# event. It is a placeholder, not an observation: all users' activity shares it.
+# Point it at an address that is NOT a real host, or Brain may request a
+# mitigation against whatever is really there. Required.
+DEVICE_IP: "10.0.1.11"
 
-# Any IP outside these ranges is treated as External; addresses inside them are
-# treated as RoutedInternal (internal, but no MAC is knowable from a cloud log).
-INTERNAL_CIDRS:
-  - "10.0.0.0/8"
-  - "172.16.0.0/12"
-  - "192.168.0.0/16"
-  - "100.64.0.0/10"
-  - "127.0.0.0/8"
-  - "169.254.0.0/16"
-  - "fc00::/7"
-  - "fe80::/10"
-  - "::1/128"
+# ---- Polling ----
+POLL_INTERVAL_SECS: 20 # How often every drive is swept
+POLL_WORKERS: 8 # Drives swept in parallel; one sweep must finish inside one interval
+MAX_ACTIVITY_PAGES: 2 # Cap on activity pages per drive per sweep
+DISCOVER_INTERVAL_SECS: 3600 # How often the drive list is refreshed
 
 # Per-event influence on Brain's case triggering, 0.0 - 1.0
 WEIGHTS:
-  entra_signin_success: 0.05
-  entra_signin_failed: 0.35
-  file_download: 0.25
-  file_sync_download: 0.15
+  file_accessed: 0.25
+  file_created: 0.15
+  file_edited: 0.1
+  file_deleted: 0.3
+  file_moved: 0.15
+  file_renamed: 0.15
+  file_shared: 0.4
