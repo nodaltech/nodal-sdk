@@ -1,95 +1,73 @@
 # Office 365 Feeder
 
-A Nodal SDK **feeder** that turns Office 365 file activity into Cyberbrain
-events. It polls the [itemActivity][activities] feed of every watched OneDrive
-and SharePoint drive over Microsoft Graph, and pushes what it finds into Brain
-over the SDK's encrypted ZMQ channel.
+A Nodal SDK **feeder** that turns OneDrive and SharePoint file changes into
+Cyberbrain events. It is a small Flask webserver, meant to run behind nginx,
+that receives **Microsoft Graph change notifications**, fetches what changed,
+and pushes it into Brain over the SDK's encrypted ZMQ channel.
 
-The whole service is one loop:
+The whole service is one path:
 
 ```
-every POLL_INTERVAL_SECS, for each drive:
-    GET /drives/{id}/activities -> keep what is newer than the cursor -> send
+notification -> delta (what changed) -> map -> feeder.send -> 200
 ```
 
-**No inbound endpoint.** No webhook, no nginx, no TLS certificate, no public
-DNS name, no subscriptions to create or renew. The feeder makes outbound calls
-only.
-
-**No seen-set.** Each drive's cursor is a single float — the newest
-`activityDateTime` already fed — and an activity is fed when it is strictly
-newer than that. Re-reading the same page is harmless, which is exactly why no
-set of seen ids is needed.
+No queue, no seen-set. Each drive's delta link is the only cursor, and it is
+what makes that path safe: Graph retries an undelivered notification for up to
+four hours, and a retry after the cursor has advanced returns nothing to feed.
+Duplicate delivery is free.
 
 | Action | Description | Default weight |
 |--------|-------------|----------------|
-| `access` | `<drive> file accessed` | 0.25 |
-| `create` | `<drive> file created` | 0.15 |
-| `edit` | `<drive> file edited` | 0.10 |
-| `delete` | `<drive> file deleted` | 0.30 |
-| `move` | `<drive> file moved` | 0.15 |
-| `rename` | `<drive> file renamed` | 0.15 |
-| `share` | `<drive> file shared` | 0.40 |
+| created | `<drive> file created` | 0.15 |
+| edited | `<drive> file edited` | 0.10 |
+| deleted | `<drive> file deleted` | 0.30 |
 
-`<drive>` is `OneDrive` or `SharePoint`. Everything else Graph reports —
-`comment`, `mention`, `version`, `restore` — is dropped as noise.
+`<drive>` is `OneDrive` or `SharePoint`.
 
-## Why polling, and why Graph
+## What this feed cannot see
 
-**Reads are the point.** Reading a file does not change it, so a file access
-fires no Graph change notification — asking is the only way to see one. The
-activities feed is where Graph keeps them, and it is a poll by construction: the
-endpoint [accepts no OData parameters][activities], so it cannot be filtered by
-time, has no delta, and has no subscription. A 20 second sweep is the trade for
-seeing reads at all.
+**Reads.** Downloading or opening a file does not change it, so it fires no
+change notification and appears in no delta. There is no way to get reads on
+this transport — not by configuration, and not by adding code.
 
-**Graph rather than the audit log, for latency.** Office 365 Management Activity
-API notifications trail the activity itself by roughly half an hour, because
-they only fire once a content blob is sealed. That is fine for an audit trail
-and useless to a realtime system.
+If read visibility is what you need, the only complete source is the unified
+audit log via the Office 365 Management Activity API (`FileAccessed`,
+`FileDownloaded`), at roughly 30 minutes behind. Graph's `itemActivity` feed
+nominally has an `access` action, but it is poll-only, its latency is
+undocumented, and in testing it did not surface downloads at all.
 
-Three things this costs, worth understanding before you deploy:
+**Sign-ins.** Graph has no change notification subscription for sign-in logs —
+[`auditLogs/signIns` is not a subscribable resource][resources] and
+[supports neither delta nor notifications][signins].
 
-**1. Sign-ins are gone.** Graph has no subscription *or* usable low-latency read
-for sign-in logs — [`auditLogs/signIns` is not a subscribable resource][resources]
-and [supports neither delta nor change notifications][signins]. If you need
-sign-in events they have to come from somewhere else.
-
-**2. There is no real device.** Graph reports no client address for file activity
-— `itemActivity` names the user who acted but never the machine or address they
-did it from. The actor's identity is the only key that means anything here, and
-it is what Brain correlates on. Brain needs a device regardless, so a configured
-stand-in address is attached to every event — see *Device attribution* below.
-
-**3. Read latency is undocumented.** Microsoft publishes latency figures for
-`driveItem` change notifications but **nothing** for the activities feed. Your
-end-to-end latency is `20s + whatever lag the feed itself has`, and only the
-second term is unknown. Measure it in your tenant before you rely on it:
-
-```bash
-# touch a file in a watched drive, then watch how long it takes to appear
-./venv/bin/python o365_feeder.py --once -v
-```
-
-If the feed turns out to lag like the audit log, this feeder gains you nothing
-over the Management API and you should know that before wiring it to Brain.
-
-**Also verify the feed returns anything at all.** The Graph activity APIs have a
-[history of returning empty results in some tenants][empty]. `--once` is the
-one-command check.
-
-[activities]: https://learn.microsoft.com/en-us/graph/api/itemactivity-list
 [resources]: https://learn.microsoft.com/en-us/graph/change-notifications-overview#supported-resources
 [signins]: https://learn.microsoft.com/en-us/graph/api/resources/signin
-[empty]: https://learn.microsoft.com/en-us/answers/questions/732985/onedrive-for-business-graph-api-getactivitiesbyint
+
+## Latency
+
+Microsoft documents driveItem change notification delivery as **averaging under
+one minute, with a maximum of six hours** ([latency table][latency]). That is an
+average, not a bound. Delta itself — the fetch that follows each notification —
+has no published latency figure at all.
+
+So measure your own tenant rather than trusting either number:
+
+```bash
+./venv/bin/python diagnose.py you@yourtenant.com --latency
+```
+
+That creates one small probe file, times how long `delta` takes to report it,
+and deletes it. The result is the floor; notification delivery sits on top.
+
+[latency]: https://learn.microsoft.com/en-us/graph/change-notifications-overview#latency
 
 ## Device attribution
 
-Brain requires every event to name a device, and Graph never tells us one. So
-every emitted event carries the address in `DEVICE_IP`, defaulting to
-`10.0.1.11`. It is a placeholder, not an observation — **all** file activity in
-the tenant shares it, whoever acted and wherever they were, because Graph does
-not report where they were.
+Brain requires every event to name a device, and Graph never tells us one — a
+`driveItem` notification carries [no change detail at all][webhooks], and delta
+names the user who touched an item but never where from. So every emitted event
+carries the address in `DEVICE_IP`, defaulting to `10.0.1.11`. It is a
+placeholder, not an observation: **all** file activity in the tenant shares it.
 
 This example needs **no changes to the SDK**: `Event["device"]` stays required
 and `EventBuilder` is used exactly as it ships.
@@ -97,101 +75,86 @@ and `EventBuilder` is used exactly as it ships.
 Two consequences worth being deliberate about:
 
 * **Point `DEVICE_IP` at an address that is not a real host.** Brain may request
-  an IP-targeted mitigation against the device it sees on these events, and it
-  would be pointing at whatever is genuinely at that address.
+  an IP-targeted mitigation against the device it sees on these events.
 * **Per-device correlation is meaningless on this feed.** Every user's activity
   lands on one fabric node, so that node will look permanently busy. The useful
   correlation is the identity, which is per-user and accurate.
 
 An internal address (RFC1918, CGNAT, loopback, link-local, and the v6
 equivalents) keys as `RoutedInternal` — there is no MAC to key on for a cloud
-feed and never will be. Anything else keys as `External`.
+feed and never will be. Anything else keys as `External`. `DEVICE_IP` is
+required, and a missing, empty or malformed value stops the feeder at startup.
 
-`DEVICE_IP` is **required**, and a missing, empty or malformed value stops the
-feeder at startup rather than at the first event.
+[webhooks]: https://learn.microsoft.com/en-us/onedrive/developer/rest-api/concepts/using-webhooks
 
 ## How it fits together
 
 ```
-   poll thread ──┬─> GET /drives/{a}/activities ─┐
-    every 20s    ├─> GET /drives/{b}/activities ─┤ cursor filter
-   (POLL_WORKERS)└─> GET /drives/{c}/activities ─┘ map -> EventBuilder
-                                                        │
-                                                        ▼
-                                              feeder.send ──ZMQ (curve)──> Brain
-
-   discovery thread ──> GET /users, GET /users/{id}/drive   (hourly)
+   Microsoft Graph ──POST notification──> nginx (TLS) ──> Flask webhook (loopback)
+                                                                 │
+                                     GET /drives/{id}/root/delta │ inline
+                                                                 │ map -> EventBuilder
+                                                                 ▼
+                                                          feeder.send ──ZMQ (curve)──> Brain
+   subscription thread ──> POST/PATCH /subscriptions
 ```
 
-* **poll thread** sweeps every drive through a small thread pool, then sends
-  everything the workers hand back. It is the only thread that sends, which is
-  why there is no lock around the socket — the SDK's PUB socket is not thread
-  safe, so workers return events rather than sending them.
-* **discovery thread** refreshes the drive list hourly, so new users and new
-  sites get picked up. `WATCH_USERS: ["*"]` costs one Graph call per user, which
-  has no business happening on the poll interval.
+* **webhook** answers Graph's `validationToken` handshake, then does the real
+  work inline and returns 200. Graph counts a notification delivered only on a
+  2xx within 3 seconds, so the delta fetch is capped at `MAX_PAGES` pages;
+  anything left over arrives on the next notification. A Graph failure returns
+  503 so the notification is redelivered, with the cursor left where it was.
+* **subscription thread** creates one subscription per watched drive and renews
+  it a day before expiry, rebuilding any that Graph has dropped. At startup it
+  first deletes any subscription pointing at our own `NOTIFICATION_URL`, so a
+  restart inside a subscription's lifetime does not leave the old one live and
+  get every change notified twice.
 * **asyncio loop** sends nothing. It stays running because the SDK's curve
   authenticator is an asyncio task on it, and without a live loop Brain cannot
   authenticate to the socket.
 
-A drive joining the feed has its cursor primed to **now**, so adopting it does
-not replay its retained activity history into Brain as a flood of events.
-
-## Cost
-
-This is the one number to think about before setting `WATCH_USERS: ["*"]`.
-
-One sweep is **one Graph call per drive**, every `POLL_INTERVAL_SECS`, whether
-or not anything happened. At the 20 second default:
-
-| Drives | Calls/min | Calls/day |
-|--------|-----------|-----------|
-| 10 | 30 | 43,200 |
-| 100 | 300 | 432,000 |
-| 200 (default cap) | 600 | 864,000 |
-
-SharePoint throttles on a [resource-unit budget per site collection][throttling]
-rather than a flat request rate, so there is no single number to stay under —
-but this is a sustained load that never goes quiet, and it scales linearly with
-drive count. `MAX_DRIVES` defaults to 200 as a deliberate brake. If you need
-wider coverage, raise `POLL_INTERVAL_SECS` before raising `MAX_DRIVES`.
-
-One sweep must also *finish* inside one interval. With 200 drives on 8 workers
-that is 25 sequential calls per worker in 20 seconds — tight. The feeder logs a
-warning when a sweep overruns; raise `POLL_WORKERS` when you see it.
-
-[throttling]: https://learn.microsoft.com/en-us/sharepoint/dev/general-development/how-to-avoid-getting-throttled-or-blocked-in-sharepoint-online
+A drive is primed with `delta?token=latest` when first subscribed, so adopting
+it does not replay its existing contents into Brain as a flood of "created"
+events.
 
 ## Files
 
 | File | Purpose |
 |------|---------|
-| `o365_feeder.py` | Entry point: config, poll loop, discovery, feeder |
-| `o365_graph.py` | Graph client: auth, discovery, activities |
-| `o365_events.py` | `itemActivity` → Nodal `Event` mapping, buckets and weights |
+| `o365_feeder.py` | Entry point: config, webhook server, subscriptions, feeder |
+| `o365_graph.py` | Graph client: auth, discovery, subscriptions, delta |
+| `o365_events.py` | `driveItem` → Nodal `Event` mapping, buckets and weights |
 | `selftest.py` | Offline end-to-end check against a fake Microsoft Graph |
-| `samples/drive_activities.json` | Example activities response for `--replay` / selftest |
+| `diagnose.py` | Check a real tenant, and measure delta latency |
+| `samples/drive_changes.json` | Example `delta` response for `--replay` / selftest |
+| `deploy/nginx-o365-feeder.conf` | nginx server block |
 | `deploy/o365-feeder.service` | systemd unit |
 
 ## Setup
 
 ### 1. Entra app registration
 
-In the Entra portal, register an application and give it read access to files:
-
 1. **App registrations → New registration**, single tenant.
 2. **Certificates & secrets → New client secret**, keep the value.
 3. **API permissions → Add a permission → Microsoft Graph → Application
-   permissions**, add:
-   * `Files.Read.All` — read drives and their activity feeds
+   permissions** (not Delegated), add:
+   * `Files.Read.All` — read drives and delta
    * `User.Read.All` — enumerate users, and resolve an actor's object id to a UPN
    * `Sites.Read.All` — only if you set `WATCH_SITES`
 
-   Then **Grant admin consent**.
+   Then **Grant admin consent** — a separate click, and without it every call
+   returns 403 even though the permissions are listed.
 4. Note the **Directory (tenant) ID** and **Application (client) ID**.
 
-These are read-only permissions, but `Files.Read.All` is tenant-wide read access
-to every file in the organisation. Treat the client secret accordingly.
+`Files.Read.All` is tenant-wide read access to every file in the organisation.
+Treat the client secret accordingly.
+
+Verify consent actually applied — `diagnose.py` prints the token's `roles` claim,
+which is the only real proof:
+
+```bash
+./venv/bin/python diagnose.py you@yourtenant.com
+```
 
 ### 2. Install
 
@@ -210,8 +173,7 @@ Running the feeder once with no config writes a commented template and exits:
 ./venv/bin/python o365_feeder.py
 ```
 
-Fill in `o365_feeder.yaml` (see `o365_feeder.yaml.example`). The keys that matter
-most:
+Fill in `o365_feeder.yaml` (see `o365_feeder.yaml.example`):
 
 | Key | Notes |
 |-----|-------|
@@ -219,18 +181,40 @@ most:
 | `COMPONENT_IP` / `LISTEN_PORT` | Where Brain connects *in* to this feeder |
 | `GHOST_URL` | `https://<ghost fqdn>/api/components/handshake` |
 | `TENANT_ID` / `CLIENT_ID` / `CLIENT_SECRET` | From step 1 |
+| `NOTIFICATION_URL` | The **public HTTPS** URL nginx serves, e.g. `https://o365-feed.example.com/webhook/o365` |
+| `WEBHOOK_PATH` / `WEBHOOK_HOST` / `WEBHOOK_PORT` | Local bind, keep on loopback behind nginx |
+| `CLIENT_STATE` | Random secret. Graph echoes it on every notification and the feeder ignores anything else |
 | `WATCH_USERS` | OneDrive: list of UPNs, or `["*"]` for every enabled user, or `[]` for none |
 | `WATCH_SITES` | SharePoint: list of site ids/paths, or `["*"]`, or `[]` |
-| `MAX_DRIVES` | Polling brake — see *Cost* above before raising it |
-| `POLL_INTERVAL_SECS` | Sweep interval, 20s by default |
-| `POLL_WORKERS` | Drives polled in parallel. One sweep must finish inside one interval |
-| `DISCOVER_INTERVAL_SECS` | How often the drive list is refreshed, hourly by default |
-| `DEVICE_IP` | Stand-in device on every event, `10.0.1.11` by default. Required. See *Device attribution* — do not point it at a real host |
+| `MAX_DRIVES` | One drive is one subscription, so `["*"]` on a 5,000-seat tenant means 5,000 of them — raise this deliberately |
+| `DEVICE_IP` | Stand-in device on every event. Required. See *Device attribution* — do not point it at a real host |
+| `MAX_PAGES` | Delta pages fetched per notification. Bounds how long the webhook holds Graph's 3-second budget |
 
-The config file holds a client secret — keep it `chmod 600` and owned by the
-service user. It is in `.gitignore` for that reason.
+Subscription lifetime (3 days), the renewal margin (1 day) and the maintenance
+interval (5 minutes) are constants in `o365_feeder.py` — there is no reason to
+tune them.
 
-### 4. Run
+The config file holds two secrets — keep it `chmod 600` and owned by the service
+user. It is in `.gitignore` for that reason.
+
+### 4. nginx
+
+```bash
+sudo cp deploy/nginx-o365-feeder.conf /etc/nginx/sites-available/o365-feeder
+sudo ln -s /etc/nginx/sites-available/o365-feeder /etc/nginx/sites-enabled/
+sudo nginx -t && sudo systemctl reload nginx
+```
+
+Adjust `server_name`, certificate paths and the upstream port. Microsoft
+requires a publicly trusted certificate: a self-signed cert makes the validation
+handshake fail with no useful error on the Microsoft side.
+
+Microsoft publishes the [IP ranges Graph delivers from][ips] if you want to
+narrow the firewall, but `CLIENT_STATE` is the actual authentication.
+
+[ips]: https://learn.microsoft.com/en-us/office365/enterprise/additional-office365-ip-addresses-and-urls
+
+### 5. Run
 
 ```bash
 sudo cp deploy/o365-feeder.service /etc/systemd/system/
@@ -238,59 +222,59 @@ sudo systemctl enable --now o365-feeder
 journalctl -u o365-feeder -f
 ```
 
-On startup you should see the handshake with ghost, a
+On startup you should see the handshake with ghost, an
 `events will be keyed on device ...` line confirming `DEVICE_IP`, then
-`discovered N new drive(s), watching N`, then a `sweep fed N event(s)` line
-whenever activity turns up. A status line lands every 60 seconds with drive,
-sweep, activity, event and error counts.
-
-Nothing needs to be exposed. There is no listening port other than
-`LISTEN_PORT`, which is Brain dialling in.
+`watching N drive(s)`, then a pair of `answered graph endpoint validation
+handshake` / `subscribed drive ...` lines per drive — that pair means the round
+trip through nginx worked. A status line lands every 60 seconds with drive,
+subscription, notification, change and event counts.
 
 ## Event mapping
 
 Every event carries the actor's user principal name as its identity
 (`set_identity(upn, "office365")`) plus the configured `DEVICE_IP` as its device
-and `device_ip`. Identity is the key that carries real information — see *Device
-attribution* above.
+and `device_ip`. Identity is the key that carries real information.
 
-Identity comes from the activity's `actor`, preferring `userPrincipalName`, then
-`email`, then a cached `/users/{id}` lookup on the object id, then the display
-name. The display name is a poor key — not unique, and not what other feeds
-report — so it is a last resort, and an actor with none of these is skipped
-rather than fed with nothing to correlate on.
+Identity comes from delta's `lastModifiedBy` (falling back to `createdBy`),
+preferring `userPrincipalName`, then `email`, then a cached `/users/{id}` lookup
+on the object id, then the display name. The display name is a poor key — not
+unique, and not what other feeds report — so it is a last resort, and an item
+with no identifiable actor is skipped rather than fed with nothing to correlate
+on.
 
-Metadata carries the useful fields as strings: item id, name, path, web URL,
-size, MIME type, the action, the activity id, the drive and its owner, and the
-actor's display name.
+Timestamps come from `lastModifiedDateTime`, not ingestion time. Notifications
+average under a minute but can lag far longer, and using ingestion time would
+bunch unrelated activity together at the wrong moment.
 
-Timestamps come from Microsoft's `activityDateTime`, not ingestion time. The
-feed lags by an unspecified amount, and using ingestion time would bunch
-unrelated activity together at the wrong moment.
+### Inferring the action
 
-Both the v1.0 and beta activity shapes are accepted — v1.0 puts action keys at
-the top level with `activityDateTime`, beta nests them under `action` with
-`times.recordedTime`. Switching endpoints therefore cannot silently produce an
-empty feed.
+`delta` reports each item's *latest state*, not each change — an item renamed
+twice appears once, with its final name. So the action is inferred:
+
+* a `deleted` facet → **deleted**
+* `createdDateTime == lastModifiedDateTime` → **created**
+* otherwise → **edited**
+
+That is a heuristic, not a record: a rename or a move both read as an edit, and
+a file created and then immediately edited reads as an edit. The drive root and
+folder metadata churn are skipped; a folder *deletion* is kept, since that is
+the interesting half.
+
+Note that OneDrive for Business omits `name` on deleted items, so a deletion
+event has an `item_id` and path but no `item_name`. That is Graph's behaviour,
+not a mapping gap.
 
 ### Buckets and weights
 
 Bucket choices follow the SDK's rule — the more you hash, the more buckets, and
-the more influence the events have on case triggering. Events bucket on
+the more influence the events have on case triggering. Every event buckets on
 (description, user, item), so:
 
 * One file touched repeatedly stays in one bucket and stays quiet.
-* A user working through many distinct files piles up buckets fast — which is
-  the exfiltration shape worth catching.
-* `share` carries the most weight: it is the only action that can hand data to
-  someone outside the tenant. `delete` is next, because bulk deletion is the
-  ransomware shape. `edit` carries least — ordinary work is mostly edits.
-
-**When `driveItem` is not expanded**, the event buckets on the user alone
-instead. Drive-wide activity listings do not always include the item, and there
-is no `$expand` to ask with. Bucketing on the activity id instead would give
-every single read its own bucket and drive cases on ordinary work, so this
-deliberately under-counts — the safe direction.
+* A user working through many distinct files piles up buckets fast.
+* `delete` carries the most weight, because bulk deletion is the ransomware
+  shape and it is the sharpest signal delta gives. `edit` carries least —
+  ordinary work is mostly edits.
 
 Tune the weights in `WEIGHTS` if your tenant is noisier or quieter than average;
 they are the first thing to turn down if this feed starts driving cases on its
@@ -298,59 +282,46 @@ own.
 
 Buckets come from the SDK's `hash_bucket`, which uses Python's string hash — that
 is salted per process, so bucket values change on restart unless the seed is
-pinned. The systemd unit sets `PYTHONHASHSEED=0` to keep them stable.
-
-### Adding another action
-
-Add an entry to `ACTIONS` in `o365_events.py` with a label and weight key, and a
-default in `DEFAULT_WEIGHTS`. Any [`itemActionSet`][actionset] key works with no
-other change.
-
-[actionset]: https://learn.microsoft.com/en-us/graph/api/resources/itemactionset
+pinned. The systemd unit sets `PYTHONHASHSEED=0`.
 
 ## Testing
 
 `selftest.py` stands up a fake Microsoft Graph on loopback and walks the whole
-path — token, drive discovery, cursor priming, polling, both activity shapes,
-re-poll idempotency, bucketing, identity resolution, device keying and behaviour
-when Graph is down:
+path — token, discovery, stale-subscription cleanup, subscription create, the
+`validationToken` handshake, notification, delta, mapping, redelivery,
+authentication, subscription repair, device keying, and recovery after a Graph
+failure:
 
 ```bash
 ./venv/bin/python selftest.py
 ```
 
-`--once` runs against your **real** tenant: it discovers drives, takes whatever
-the activity feed currently retains, prints the events and exits without
-sending anything. This is the first thing to run on a new tenant — it answers
-both "does the activity feed return anything here" and "what will this look
-like":
+`diagnose.py` runs against a **real** tenant: it prints the token's granted
+roles, resolves the user's drive, and shows what delta reports. With `--latency`
+it also measures how fast a change surfaces.
+
+`--replay` maps a saved delta response to events:
 
 ```bash
-./venv/bin/python o365_feeder.py --once
+./venv/bin/python o365_feeder.py --replay samples/drive_changes.json
 ```
 
-`--replay` maps a saved activities response to events, which is the quickest way
-to check a mapping change:
-
-```bash
-./venv/bin/python o365_feeder.py --replay samples/drive_activities.json
-```
-
-`--dry-run` polls for real on the normal interval but logs events instead of
-sending them to Brain. Useful for confirming volume before wiring it up.
+`--dry-run` runs the real thing against your tenant — webhook, subscriptions and
+all — but logs events instead of sending them to Brain.
 
 ## Troubleshooting
 
 | Symptom | Cause |
 |---------|-------|
-| `--once` prints 0 events | The activity feed is returning nothing for these drives. Confirm `Files.Read.All` is consented, then check whether the API returns data for your tenant at all — see *Why polling, and why Graph* |
-| `discovered 0 new drive(s)` | No drive matched. `WATCH_USERS` UPNs must be exact; users who have never opened OneDrive have no drive provisioned (a 404, logged at debug — rerun with `-v`) |
-| `sweep of N drive(s) took ...s, longer than the 20s interval` | Too many drives for `POLL_WORKERS`, or Graph is slow. Raise `POLL_WORKERS`, or raise `POLL_INTERVAL_SECS` |
-| `could not poll drive ...` with 429 | Throttled. The client obeys `Retry-After`; if it is constant, you are sweeping too many drives too often — see *Cost* |
+| `subscription for drive ... failed` mentioning validation | Graph's `validationToken` POST is not reaching the feeder. Check `NOTIFICATION_URL` against nginx's `server_name` and location, and the certificate chain. Self-signed will not work |
+| Subscriptions created, but no notifications | Normal until something *changes* in a watched drive. A read fires nothing — see *What this feed cannot see*. Confirm with the status line that `subscribed` equals `drives` |
+| No events after you downloaded files | Expected. Downloads are invisible to this transport. Edit or create a file to test it |
+| `notification for unknown subscription` | A subscription outlived the process that made it. Startup deletes any pointing at our own `NOTIFICATION_URL`, so this clears itself unless `NOTIFICATION_URL` changed |
+| `rejected notification ...: bad clientState` | `CLIENT_STATE` changed after the subscriptions were created. Graph echoes the value recorded at subscription time; restart to recreate them |
+| `delta link for drive ... aged out, re-priming` | Graph returned 410. The feeder re-primes to "now" rather than re-enumerating, so changes in the gap are lost by design — re-enumerating would flood Brain with events for old files |
+| `drive ... has more changes pending` | A burst bigger than `MAX_PAGES` pages. The rest arrives on the next notification; raise `MAX_PAGES` if constant, but watch the 3-second budget |
 | `token request failed 401` | Wrong client secret, or admin consent was never granted |
-| Events arrive with a display name instead of a UPN as the identity | Graph gave an actor with no UPN, no email and an id that would not resolve. Check `User.Read.All` is consented — without it every actor falls back to a display name, which correlates poorly |
-| Events appear minutes after the activity | Expected, and the part that is out of the feeder's hands. `20s` is the sweep; the rest is the activity feed's own lag, which Microsoft does not document |
-| A burst of events on restart | Should not happen — a drive's cursor is primed to now on discovery. If it does, the cursor is being reset; note the cursor is in memory only, so a restart begins from "now" and activity during the downtime is not backfilled |
-| Brain opened a case against `10.0.1.11` | Working as configured — every event in this feed shares that device, so it will look busy. Read *Device attribution*; the per-user signal is the identity |
-| Feeder exits at startup with a `ValueError` about `DEVICE_IP` | It is missing, empty or not a valid IP. Deliberate: it is required, and failing later would be worse |
+| Identity is a display name instead of a UPN | Graph gave an actor with no UPN, no email and an id that would not resolve. Check `User.Read.All` is consented |
+| Brain opened a case against `10.0.1.11` | Working as configured — every event shares that device, so it will look busy. See *Device attribution* |
+| Feeder exits at startup with a `ValueError` about `DEVICE_IP` | It is missing, empty or not a valid IP. Deliberate: it is required |
 | `Feeder 'office365' not connected to brain...` | The SDK could not reach Brain; check `COMPONENT_IP`/`LISTEN_PORT` are what ghost has and that Brain can dial in |

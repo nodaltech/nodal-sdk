@@ -1,28 +1,28 @@
 """
-Mapping from Microsoft Graph itemActivity records to Nodal feeder events.
+Mapping from Microsoft Graph driveItem changes to Nodal feeder events.
 
-One shape comes in: an `itemActivity` from a drive's activity feed. It names the
-action, who did it, and when - a file accessed, created, edited, deleted, moved,
-renamed or shared.
+One shape comes in: a `driveItem` from a `delta` response, fetched after a
+change notification. It carries the item's latest state and who touched it last.
+
+Delta reports state, not history, so the action is inferred:
+
+  a `deleted` facet                      -> deleted
+  createdDateTime == lastModifiedDateTime -> created
+  anything else                           -> edited
 
 Graph reports no client address for file activity, so there is no real device to
 key these events on. The actor's identity is the meaningful key, and it is what
 lets Brain line them up with the rest of the fabric and request identity
-mitigations.
-
-Brain needs a device regardless, so the configured `DEVICE_IP` is attached to
-every event. It is an attribution placeholder, not an observation: the whole
-feed shares it, whoever acted and wherever they were.
+mitigations. Brain needs a device regardless, so the configured `DEVICE_IP` is
+attached to every event - an attribution placeholder, not an observation.
 """
 
 import ipaddress
 import logging
 from typing import Any, Dict, Iterable, List, Optional
 
-from nodal_sdk.types import DeviceKey
-
 from nodal_sdk.feeder import EventBuilder
-from nodal_sdk.types import Event
+from nodal_sdk.types import DeviceKey, Event
 
 from o365_graph import parse_ts
 
@@ -30,22 +30,23 @@ log = logging.getLogger("o365.events")
 
 IDENTITY_SOURCE = "office365"
 
-# itemActionSet keys we feed, mapped to (label, weight key). Anything else Graph
-# reports - comment, mention, version, restore - is dropped as noise.
+# action -> (label, weight key)
 ACTIONS = {
-    "access": ("file accessed", "file_accessed"),
     "create": ("file created", "file_created"),
     "edit": ("file edited", "file_edited"),
     "delete": ("file deleted", "file_deleted"),
-    "move": ("file moved", "file_moved"),
-    "rename": ("file renamed", "file_renamed"),
-    "share": ("file shared", "file_shared"),
 }
 
-# Used only to decide whether the configured DEVICE_IP is an internal or an
-# external address. `is_private` is not used, because it also covers the
-# documentation and benchmarking ranges, which would land a real public IP on
-# the internal side of the fabric.
+DEFAULT_WEIGHTS = {
+    "file_created": 0.15,
+    "file_edited": 0.10,
+    # bulk deletion is the ransomware shape, and the sharpest signal delta gives
+    "file_deleted": 0.30,
+}
+
+# Used only to decide whether the configured DEVICE_IP is internal or external.
+# `is_private` is not used, because it also covers the documentation and
+# benchmarking ranges, which would land a real public IP on the internal side.
 INTERNAL_CIDRS = [
     "10.0.0.0/8",
     "172.16.0.0/12",
@@ -57,19 +58,6 @@ INTERNAL_CIDRS = [
     "fe80::/10",
     "::1/128",
 ]
-
-DEFAULT_WEIGHTS = {
-    # a read is the exfiltration shape, and the reason this feed polls at all
-    "file_accessed": 0.25,
-    "file_created": 0.15,
-    "file_edited": 0.10,
-    # bulk deletion is the ransomware shape
-    "file_deleted": 0.30,
-    "file_moved": 0.15,
-    "file_renamed": 0.15,
-    # a share is the only one of these that can hand data to an outsider
-    "file_shared": 0.40,
-}
 
 
 def device_key(ip: str) -> DeviceKey:
@@ -112,15 +100,13 @@ class EventMapper:
         self.device_ip = str(device_ip or "").strip()
         self.device: DeviceKey = device_key(self.device_ip)
 
-    # ---------------------------------------------------------------- helpers
-
     def actor_identity(self, actor: Dict[str, Any]) -> Optional[str]:
         """
         Pull a usable identity out of a Graph identitySet.
 
         Preference order is UPN, then email, then a resolved lookup on the object
-        id, then the display name. The display name is a poor key - it is not
-        unique and not what other feeds report - so it is a last resort.
+        id, then the display name. The display name is a poor key - not unique,
+        and not what other feeds report - so it is a last resort.
         """
         user = (actor or {}).get("user") or {}
 
@@ -147,56 +133,34 @@ class EventMapper:
 
         return None
 
-    @staticmethod
-    def action_of(activity: Dict[str, Any]) -> Optional[str]:
-        """
-        Find the action on an activity.
-
-        v1.0 puts the action keys at the top level (`{"access": {}}`); the beta
-        endpoint nests them under `action`. Both are accepted so switching the
-        endpoint does not silently produce an empty feed.
-        """
-        for source in (activity, activity.get("action") or {}):
-            for name in ACTIONS:
-                if source.get(name) is not None:
-                    return name
-        return None
-
-    @staticmethod
-    def when_of(activity: Dict[str, Any]) -> Any:
-        """v1.0 says activityDateTime, beta says times.recordedTime."""
-        return parse_ts(
-            activity.get("activityDateTime")
-            or (activity.get("times") or {}).get("recordedTime")
-        )
-
-    @staticmethod
-    def _item_fields(item: Dict[str, Any]) -> Dict[str, str]:
-        parent = item.get("parentReference") or {}
-        return {
-            "item_id": str(item.get("id", "")),
-            "item_name": str(item.get("name", "")),
-            "item_path": str(parent.get("path", "")),
-            "web_url": str(item.get("webUrl", "")),
-            "size": str(item.get("size", "")),
-            "mime_type": str(((item.get("file") or {}).get("mimeType")) or ""),
-        }
-
-    # ----------------------------------------------------------------- mapping
-
-    def map_activity(self, activity: Dict[str, Any], drive: Dict[str, str]) -> Optional[Event]:
-        """Turn one itemActivity into an Event, or None if we don't feed its action."""
-        action = self.action_of(activity)
-        if action is None:
+    def map_item(self, item: Dict[str, Any], drive: Dict[str, str]) -> Optional[Event]:
+        """Turn one changed driveItem into an Event, or None if we skip it."""
+        # the drive root comes back on every delta as the hierarchy's parent
+        if item.get("root") is not None:
             return None
+
+        deleted = item.get("deleted") is not None
+        is_folder = item.get("folder") is not None
+        if is_folder and not deleted:
+            return None  # folder metadata churn is noise; a deletion is not
+
+        created = parse_ts(item.get("createdDateTime"))
+        modified = parse_ts(item.get("lastModifiedDateTime"))
+
+        if deleted:
+            action = "delete"
+        elif created and modified and created == modified:
+            action = "create"
+        else:
+            action = "edit"
 
         label, weight_key = ACTIONS[action]
         desc = f"{drive.get('label', 'OneDrive')} {label}"
 
-        identity = self.actor_identity(activity.get("actor") or {})
+        actor = item.get("lastModifiedBy") or item.get("createdBy") or {}
+        identity = self.actor_identity(actor)
         if identity is None:
-            # nothing to key the event on: no address, and now no user either
-            log.debug("skipping activity %s - no identifiable actor", activity.get("id"))
+            log.debug("skipping %s of %s - no identifiable actor", action, item.get("id"))
             return None
 
         # The device is the configured stand-in, not something Graph told us -
@@ -205,64 +169,51 @@ class EventMapper:
         event.weight(self.weights.get(weight_key, 0.15))
         event.set_identity(identity, IDENTITY_SOURCE)
 
-        fields = self._item_fields(activity.get("driveItem") or {})
-
         # A bucket per (action, user, item) means one file touched repeatedly
         # stays quiet, while a user working through many distinct files piles up
-        # buckets fast - the exfiltration shape worth catching.
-        #
-        # Drive-wide activity listings do not always expand driveItem, and there
-        # is no $expand to ask with. Without an item, bucket on the user alone:
-        # that under-counts, which is the safe direction - bucketing on the
-        # activity id instead would give every single read its own bucket and
-        # drive cases on ordinary work.
-        if fields["item_id"]:
-            event.hash_bucket(desc, identity, fields["item_id"])
-        else:
-            event.hash_bucket(desc, identity)
+        # buckets fast - the shape worth catching.
+        item_id = str(item.get("id", ""))
+        event.hash_bucket(desc, identity, item_id)
 
-        metadata = dict(fields)
-        metadata.update(
-            {
-                "action": action,
-                "activity_id": str(activity.get("id", "")),
-                "activity_time": str(
-                    activity.get("activityDateTime")
-                    or (activity.get("times") or {}).get("recordedTime")
-                    or ""
-                ),
-                "actor": identity,
-                "actor_display": str(
-                    (((activity.get("actor") or {}).get("user") or {}).get("displayName")) or ""
-                ),
-                "drive_id": drive.get("drive_id", ""),
-                "drive_type": drive.get("drive_type", ""),
-                "drive_owner": drive.get("owner", ""),
-            }
-        )
+        parent = item.get("parentReference") or {}
+        metadata = {
+            "action": action,
+            "item_id": item_id,
+            "item_name": str(item.get("name", "")),
+            "item_path": str(parent.get("path", "")),
+            "item_type": "folder" if is_folder else "file",
+            "web_url": str(item.get("webUrl", "")),
+            "size": str(item.get("size", "")),
+            "mime_type": str(((item.get("file") or {}).get("mimeType")) or ""),
+            "created": str(item.get("createdDateTime", "")),
+            "modified": str(item.get("lastModifiedDateTime", "")),
+            "actor": identity,
+            "actor_display": str(((actor.get("user") or {}).get("displayName")) or ""),
+            "drive_id": drive.get("drive_id", ""),
+            "drive_type": drive.get("drive_type", ""),
+            "drive_owner": drive.get("owner", ""),
+        }
         event.set_metadata({k: str(v) for k, v in metadata.items() if v not in (None, "")})
 
         data = event.get_data()
         data["device_ip"] = self.device_ip
 
-        # use Microsoft's timestamp, not ingestion time - the activity feed lags
-        # by an unspecified amount, and events would otherwise cluster at the
-        # wrong moment
-        when = self.when_of(activity)
+        # use Microsoft's timestamp, not ingestion time - notifications average
+        # under a minute but can lag far longer, and events would otherwise
+        # cluster at the wrong moment
+        when = modified or created
         if when is not None:
             data["ts"] = when.timestamp()
 
         return data
 
-    def map_activities(
-        self, activities: Iterable[Dict[str, Any]], drive: Dict[str, str]
-    ) -> List[Event]:
+    def map_items(self, items: Iterable[Dict[str, Any]], drive: Dict[str, str]) -> List[Event]:
         events = []
-        for activity in activities:
+        for item in items:
             try:
-                event = self.map_activity(activity, drive)
+                event = self.map_item(item, drive)
             except Exception:
-                log.exception("failed to map activity %s", activity.get("id"))
+                log.exception("failed to map driveItem %s", item.get("id"))
                 continue
             if event is not None:
                 events.append(event)

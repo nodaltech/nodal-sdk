@@ -1,7 +1,5 @@
 # the SDK itself (pip install -e ../..) pulls in pyzmq / requests / numpy / pyyaml
-requests
-pyyaml
-# flask + waitress are only needed by selftest.py, which fakes the Graph API.
-# The feeder itself has no inbound endpoint - it polls.
 flask
 waitress
+requests
+pyyaml

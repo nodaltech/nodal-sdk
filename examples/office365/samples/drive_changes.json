@@ -1,0 +1,63 @@
+{
+  "value": [
+    {
+      "id": "01BYE5RZ6QN3ZWBTUFOFD3GSPGOHDJD36K",
+      "name": "root",
+      "root": {},
+      "folder": { "childCount": 4 }
+    },
+    {
+      "id": "01BYE5RZ7YZ4DXQMLHDFHMFJZ4PGKLNW2A",
+      "name": "Q3-pipeline.xlsx",
+      "size": 184320,
+      "webUrl": "https://corp-my.sharepoint.com/personal/alice_corp_example_com/Documents/Q3-pipeline.xlsx",
+      "createdDateTime": "2026-09-01T14:22:03Z",
+      "lastModifiedDateTime": "2026-09-01T14:22:03Z",
+      "file": { "mimeType": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" },
+      "parentReference": { "driveId": "b!alice", "path": "/drive/root:" },
+      "createdBy": { "user": { "id": "11111111-1111-1111-1111-111111111111", "displayName": "Alice Adams", "email": "alice@corp.example.com" } },
+      "lastModifiedBy": { "user": { "id": "11111111-1111-1111-1111-111111111111", "displayName": "Alice Adams", "email": "alice@corp.example.com" } }
+    },
+    {
+      "id": "01BYE5RZ4HGXPQJXLKJDFH3MZ4PGKLNW2B",
+      "name": "customer-list.csv",
+      "size": 2097152,
+      "webUrl": "https://corp-my.sharepoint.com/personal/bob_corp_example_com/Documents/customer-list.csv",
+      "createdDateTime": "2026-08-14T09:10:00Z",
+      "lastModifiedDateTime": "2026-09-01T14:31:55Z",
+      "file": { "mimeType": "text/csv" },
+      "parentReference": { "driveId": "b!bob", "path": "/drive/root:" },
+      "lastModifiedBy": { "user": { "id": "22222222-2222-2222-2222-222222222222", "displayName": "Bob Brown", "userPrincipalName": "bob@corp.example.com" } }
+    },
+    {
+      "id": "01BYE5RZ9KLMNOPQRSTUVWXYZ4PGKLNW2C",
+      "size": 51200,
+      "deleted": { "state": "deleted" },
+      "file": { "mimeType": "application/pdf" },
+      "parentReference": { "driveId": "b!bob", "path": "/drive/root:/Contracts" },
+      "createdDateTime": "2026-07-02T11:00:00Z",
+      "lastModifiedDateTime": "2026-09-01T14:33:10Z",
+      "lastModifiedBy": { "user": { "id": "22222222-2222-2222-2222-222222222222", "displayName": "Bob Brown", "userPrincipalName": "bob@corp.example.com" } }
+    },
+    {
+      "id": "01BYE5RZFOLDERONLYCHANGEDPGKLNW2D",
+      "name": "Contracts",
+      "folder": { "childCount": 12 },
+      "createdDateTime": "2026-01-05T08:00:00Z",
+      "lastModifiedDateTime": "2026-09-01T14:33:10Z",
+      "parentReference": { "driveId": "b!bob", "path": "/drive/root:" },
+      "lastModifiedBy": { "user": { "displayName": "Bob Brown", "userPrincipalName": "bob@corp.example.com" } }
+    },
+    {
+      "id": "01BYE5RZDELETEDFOLDERPGKLNW2E",
+      "name": "Old Projects",
+      "folder": { "childCount": 0 },
+      "deleted": { "state": "deleted" },
+      "createdDateTime": "2025-03-01T08:00:00Z",
+      "lastModifiedDateTime": "2026-09-01T14:35:00Z",
+      "parentReference": { "driveId": "b!bob", "path": "/drive/root:" },
+      "lastModifiedBy": { "user": { "userPrincipalName": "bob@corp.example.com" } }
+    }
+  ],
+  "@odata.deltaLink": "https://graph.microsoft.com/v1.0/drives/b!bob/root/delta?token=SAMPLETOKEN"
+}

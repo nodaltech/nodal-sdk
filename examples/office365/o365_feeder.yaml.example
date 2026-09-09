@@ -12,13 +12,22 @@ TENANT_ID: "" # Directory (tenant) ID
 CLIENT_ID: "" # Application (client) ID
 CLIENT_SECRET: "" # Client secret value
 
+# ---- Notification receiver ----
+# NOTIFICATION_URL is the public HTTPS address nginx exposes. Graph POSTs there
+# and requires a valid, publicly trusted certificate - self signed will not do.
+NOTIFICATION_URL: "https://o365-feed.example.com/webhook/o365"
+WEBHOOK_PATH: "/webhook/o365" # Local path nginx proxies to
+WEBHOOK_HOST: "127.0.0.1" # Bind address, keep on loopback behind nginx
+WEBHOOK_PORT: 8099 # Bind port nginx proxies to
+CLIENT_STATE: "" # Shared secret Graph echoes back on every notification (any random uuid)
+
 # ---- What to watch ----
-# "*" means everything. On a large tenant that is a lot of drives to sweep every
-# POLL_INTERVAL_SECS, so MAX_DRIVES is the brake - see the README on cost.
+# One subscription per drive. "*" means everything, which on a large tenant is a
+# lot of subscriptions - MAX_DRIVES is the brake.
 WATCH_USERS: # OneDrive: list of UPNs, or ["*"], or [] for none
   - "*"
 WATCH_SITES: [] # SharePoint: list of site ids/paths, or ["*"], or [] for none
-MAX_DRIVES: 200 # Ceiling on how many drives get polled
+MAX_DRIVES: 200 # Ceiling on how many drives get subscribed
 
 # ---- Device attribution ----
 # Graph reports no client address for file activity, so there is no real device
@@ -29,18 +38,11 @@ MAX_DRIVES: 200 # Ceiling on how many drives get polled
 # mitigation against whatever is really there. Required.
 DEVICE_IP: "10.0.1.11"
 
-# ---- Polling ----
-POLL_INTERVAL_SECS: 20 # How often every drive is swept
-POLL_WORKERS: 8 # Drives swept in parallel; one sweep must finish inside one interval
-MAX_ACTIVITY_PAGES: 2 # Cap on activity pages per drive per sweep
-DISCOVER_INTERVAL_SECS: 3600 # How often the drive list is refreshed
+# ---- Feed behaviour ----
+MAX_PAGES: 3 # Cap on delta pages fetched per notification, to bound latency
 
 # Per-event influence on Brain's case triggering, 0.0 - 1.0
 WEIGHTS:
-  file_accessed: 0.25
   file_created: 0.15
   file_edited: 0.1
   file_deleted: 0.3
-  file_moved: 0.15
-  file_renamed: 0.15
-  file_shared: 0.4
