@@ -222,7 +222,9 @@ class O365Feed:
                 return 0
 
             self.stats["changes"] += len(items)
+            print(">> ITEMS: " + str(items))
             events = self.mapper.map_items(items, drive.as_metadata())
+            print(">> EVENTS: " + str(events))
             self.send(events)
             return len(events)
 
@@ -242,10 +244,11 @@ class O365Feed:
 
     def handle_notifications(self, payload: Any) -> int:
         """Process one notification batch. Returns how many events were fed."""
-        notifications = (payload or {}).get("value") or []
-        if not isinstance(notifications, list):
-            log.warning("ignoring notification batch with unexpected shape")
-            return 0
+        notifications = None
+        if isinstance(payload, dict) and "value" in payload:
+            notifications = payload.get("value")
+        elif isinstance(payload, list):
+            notifications = payload
 
         self.stats["notifications"] += len(notifications)
 

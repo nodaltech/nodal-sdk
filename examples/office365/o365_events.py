@@ -19,6 +19,7 @@ attached to every event - an attribution placeholder, not an observation.
 
 import ipaddress
 import logging
+import time
 from typing import Any, Dict, Iterable, List, Optional
 
 from nodal_sdk.feeder import EventBuilder
@@ -203,7 +204,8 @@ class EventMapper:
         # cluster at the wrong moment
         when = modified or created
         if when is not None:
-            data["ts"] = when.timestamp()
+            # data["ts"] = when.timestamp()
+            data["ts"] = time.time()
 
         return data
 
