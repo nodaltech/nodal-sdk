@@ -462,17 +462,7 @@ async def main():
     feeder = Feeder(conf["COMPONENT_NAME"], conf["LISTEN_PORT"])
     await feeder.register(conf["COMPONENT_IP"], conf["GHOST_URL"], conf["COMPONENT_TOKEN"])
     log.info("registered feeder '%s' with ghost", conf["COMPONENT_NAME"])
-    await asyncio.sleep(10.0)
-    device: DeviceKey = {"Internal": "33:32:31:00:07:42"}
-    desc = "TEST dummy event"
-    dummy = EventBuilder(device, desc=desc)
-    dummy.set_internal_peer_ip("10.0.1.33")
-    dummy.set_metadata({"danger": "lowkey"})
-    dummy.set_identity("nathan", "hubspot")
-    dummy.hash_bucket(desc, device)
-    feeder.send("event", dummy.get_data())
-    print("DUMMY sent")
-    await asyncio.sleep(5.0)
+    await asyncio.sleep(2.0)
 
     feed = O365Feed(conf)
     loop = asyncio.get_running_loop()
