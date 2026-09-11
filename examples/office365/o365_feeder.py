@@ -47,6 +47,7 @@ import threading
 import time
 import traceback
 import uuid
+import queue
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
 
@@ -54,6 +55,8 @@ import yaml
 from flask import Flask, Response, jsonify, request
 
 from nodal_sdk import Feeder
+from nodal_sdk.feeder import EventBuilder
+from nodal_sdk.types import DeviceKey
 from nodal_sdk.types import Event
 
 from o365_events import DEFAULT_WEIGHTS, EventMapper
@@ -167,9 +170,8 @@ class Drive:
 
 
 class O365Feed:
-    def __init__(self, conf: Dict[str, Any], dry_run: bool = False):
+    def __init__(self, conf: Dict[str, Any]):
         self.conf = conf
-        self.dry_run = dry_run
 
         self.notification_url: str = conf["NOTIFICATION_URL"]
         self.webhook_path: str = conf.get("WEBHOOK_PATH") or "/webhook/o365"
@@ -193,7 +195,7 @@ class O365Feed:
         self.by_subscription: Dict[str, Drive] = {}  # subscription id -> Drive
         self.registry_lock = threading.Lock()
 
-        self.feeder: Optional[Feeder] = None
+        self.feedq = queue.Queue()
 
         self.stop = threading.Event()
         self.stats = {"notifications": 0, "changes": 0, "events": 0}
@@ -210,11 +212,8 @@ class O365Feed:
             return
         self.stats["events"] += len(events)
         for event in events:
-            if self.feeder is None:
-                log.info("event: %s", json.dumps(event))
-            else:
-                log.debug("sending event: %s", json.dumps(event))
-                self.feeder.send("event", event)
+            log.debug("queueing event: %s", json.dumps(event))
+            self.feedq.put(event)
 
     # --------------------------------------------------------------- the work
 
@@ -448,17 +447,34 @@ class O365Feed:
         ).start()
 
 
-async def run(feed: O365Feed) -> None:
-    conf = feed.conf
+async def main():
+    parser = argparse.ArgumentParser(description="Office 365 Nodal feeder")
+    parser.add_argument("--verbose", "-v", action="store_true", help="debug logging")
+    args = parser.parse_args()
 
-    if feed.dry_run:
-        log.warning("dry run: not registering with ghost, events will only be logged")
-    else:
-        feeder = Feeder(conf["COMPONENT_NAME"], conf["LISTEN_PORT"])
-        await feeder.register(conf["COMPONENT_IP"], conf["GHOST_URL"], conf["COMPONENT_TOKEN"])
-        feed.feeder = feeder
-        log.info("registered feeder '%s' with ghost", conf["COMPONENT_NAME"])
+    logging.basicConfig(
+        level=logging.DEBUG if args.verbose else logging.INFO,
+        format="%(asctime)s %(levelname)-7s %(name)s %(message)s",
+    )
 
+    conf = load_config()
+
+    feeder = Feeder(conf["COMPONENT_NAME"], conf["LISTEN_PORT"])
+    await feeder.register(conf["COMPONENT_IP"], conf["GHOST_URL"], conf["COMPONENT_TOKEN"])
+    log.info("registered feeder '%s' with ghost", conf["COMPONENT_NAME"])
+    await asyncio.sleep(10.0)
+    device: DeviceKey = {"Internal": "33:32:31:00:07:42"}
+    desc = "TEST dummy event"
+    dummy = EventBuilder(device, desc=desc)
+    dummy.set_internal_peer_ip("10.0.1.33")
+    dummy.set_metadata({"danger": "lowkey"})
+    dummy.set_identity("nathan", "hubspot")
+    dummy.hash_bucket(desc, device)
+    feeder.send("event", dummy.get_data())
+    print("DUMMY sent")
+    await asyncio.sleep(5.0)
+
+    feed = O365Feed(conf)
     loop = asyncio.get_running_loop()
     for sig in (signal.SIGINT, signal.SIGTERM):
         try:
@@ -466,19 +482,18 @@ async def run(feed: O365Feed) -> None:
         except NotImplementedError:
             pass
 
-    # Off the loop, on purpose. Discovery and the stale-subscription sweep are
-    # blocking HTTP that can run for minutes on a large tenant, and the ZAP
-    # authenticator the SDK started during register() is an asyncio task on this
-    # loop. Running them here would leave Brain's CURVE handshake unanswered for
-    # that whole window, which looks exactly like a feeder that sends nothing.
     await asyncio.to_thread(feed.start_threads)
 
-    # Sending happens on the webserver thread, so this loop feeds nothing. It
-    # stays running because the SDK's curve authenticator is an asyncio task on
-    # it - without a live loop Brain cannot authenticate to the socket.
     last_report = time.time()
     while not feed.stop.is_set():
-        await asyncio.sleep(0.5)
+        if feed.feedq.empty():
+            await asyncio.sleep(0.1)
+
+        while not(feed.feedq.empty()):
+            event = feed.feedq.get()
+            print("EVENT: " + str(event))
+            feeder.send("event", event)
+
         if time.time() - last_report >= 60.0:
             last_report = time.time()
             with feed.registry_lock:
@@ -495,53 +510,5 @@ async def run(feed: O365Feed) -> None:
     log.info("shutting down")
 
 
-def replay(feed: O365Feed, path: str) -> None:
-    """Map a saved delta response to events - handy for testing without a tenant."""
-    with open(path, "r") as f:
-        body = json.load(f)
-
-    items = body.get("value") if isinstance(body, dict) else body
-    drive = Drive("replay-drive", "OneDrive", "business", "replay").as_metadata()
-
-    events = feed.mapper.map_items(items or [], drive)
-    for event in events:
-        print(json.dumps(event, indent=2))
-    print(f"\n{len(events)} event(s) from {len(items or [])} changed item(s)", file=sys.stderr)
-
-
-def main() -> None:
-    parser = argparse.ArgumentParser(description="Office 365 Nodal feeder")
-    parser.add_argument(
-        "--dry-run",
-        action="store_true",
-        help="run the webhook and subscriptions but log events instead of sending them",
-    )
-    parser.add_argument(
-        "--replay", metavar="FILE", help="map a JSON delta response to events and exit"
-    )
-    parser.add_argument("--verbose", "-v", action="store_true", help="debug logging")
-    args = parser.parse_args()
-
-    logging.basicConfig(
-        level=logging.DEBUG if args.verbose else logging.INFO,
-        format="%(asctime)s %(levelname)-7s %(name)s %(message)s",
-    )
-
-    conf = load_config()
-    feed = O365Feed(conf, dry_run=args.dry_run)
-
-    if args.replay:
-        replay(feed, args.replay)
-        return
-
-    try:
-        asyncio.run(run(feed))
-    except KeyboardInterrupt:
-        pass
-    except Exception as e:
-        traceback.print_exception(e)
-        sys.exit(1)
-
-
 if __name__ == "__main__":
-    main()
+    asyncio.run(main())

@@ -170,16 +170,11 @@ class EventMapper:
         event.weight(self.weights.get(weight_key, 0.15))
         event.set_identity(identity, IDENTITY_SOURCE)
 
-        # A bucket per (action, user, item) means one file touched repeatedly
-        # stays quiet, while a user working through many distinct files piles up
-        # buckets fast - the shape worth catching.
-        item_id = str(item.get("id", ""))
-        event.hash_bucket(desc, identity, item_id)
+        event.hash_bucket(desc, identity)
 
         parent = item.get("parentReference") or {}
         metadata = {
             "action": action,
-            "item_id": item_id,
             "item_name": str(item.get("name", "")),
             "item_path": str(parent.get("path", "")),
             "item_type": "folder" if is_folder else "file",
@@ -197,16 +192,6 @@ class EventMapper:
         event.set_metadata({k: str(v) for k, v in metadata.items() if v not in (None, "")})
 
         data = event.get_data()
-        data["peer_ip"] = self.device_ip
-
-        # use Microsoft's timestamp, not ingestion time - notifications average
-        # under a minute but can lag far longer, and events would otherwise
-        # cluster at the wrong moment
-        when = modified or created
-        if when is not None:
-            # data["ts"] = when.timestamp()
-            data["ts"] = time.time()
-
         return data
 
     def map_items(self, items: Iterable[Dict[str, Any]], drive: Dict[str, str]) -> List[Event]:

@@ -17,6 +17,7 @@ async def main():
     await feeder.register("127.0.0.1", ghost_uri, token)
 
     while True:
+        await asyncio.sleep(10)
         descs = [
             "Login failed",
             "Using invalid cert",
@@ -38,8 +39,6 @@ async def main():
         print(event.get_data())
 
         feeder.send("event", event.get_data())
-
-        await asyncio.sleep(10)
 
 
 if __name__ == "__main__":
