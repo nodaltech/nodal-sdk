@@ -19,11 +19,18 @@ unified audit log, via the Management Activity API, ~30 minutes behind.
 
 Moving parts:
 
-  webserver thread     answers Graph's validationToken handshake, then does the
-                       real work inline and returns 200
+  webserver thread     single threaded on purpose: it answers Graph's
+                       validationToken handshake, then does the real work
+                       inline and returns 200. Being the only request thread
+                       makes it the sole owner of the PUB socket, so sends need
+                       no lock, and two notifications for one drive cannot both
+                       advance that drive's cursor, so neither does the cursor.
   subscription thread  creates and renews subscriptions, so an expired or
                        dropped subscription repairs itself
-  asyncio main loop    keeps the SDK's ZAP authenticator alive for Brain
+  asyncio main loop    runs the SDK's ZAP authenticator and nothing else. It
+                       must never block: libzmq holds every incoming CURVE
+                       connection until ZAP answers it, so blocking work goes
+                       on a thread.
 
 Run: python3 o365_feeder.py [--dry-run] [--replay changes.json]
 """
@@ -40,7 +47,7 @@ import threading
 import time
 import traceback
 import uuid
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
 
 import yaml
@@ -150,11 +157,6 @@ class Drive:
     # the only cursor this service keeps
     delta_link: str = ""
 
-    # Held while a drive is processed, so two notifications for the same drive -
-    # which Graph will happily deliver at once - cannot both advance the cursor
-    # and double-feed the same changes.
-    lock: threading.Lock = field(default_factory=threading.Lock)
-
     def as_metadata(self) -> Dict[str, str]:
         return {
             "drive_id": self.drive_id,
@@ -186,13 +188,12 @@ class O365Feed:
         log.info("events will be keyed on device %s", self.mapper.device)
 
         self.drives: Dict[str, Drive] = {}  # drive id -> Drive
+        # Written by the subscription thread, read by the webserver thread, so
+        # this one lock stays. It has nothing to do with sending.
         self.by_subscription: Dict[str, Drive] = {}  # subscription id -> Drive
         self.registry_lock = threading.Lock()
 
         self.feeder: Optional[Feeder] = None
-        # The SDK's PUB socket is not thread safe and the webserver threads are
-        # what send, so all sends are serialised here.
-        self.send_lock = threading.Lock()
 
         self.stop = threading.Event()
         self.stats = {"notifications": 0, "changes": 0, "events": 0}
@@ -200,35 +201,35 @@ class O365Feed:
     # ------------------------------------------------------------------- send
 
     def send(self, events: List[Event]) -> None:
+        """
+        Publish to Brain. Only ever called from the single webserver thread,
+        which is the one thread that touches the SDK's PUB socket after the
+        main thread creates it, so there is nothing to serialise.
+        """
         if not events:
             return
         self.stats["events"] += len(events)
-        with self.send_lock:
-            for event in events:
-                if self.feeder is None:
-                    log.info("event: %s", json.dumps(event))
-                else:
-                    print("EVENT: " + str(event))
-                    dummy = {'event_id': '557a3473-6f9b-4c9c-b865-69341391db45', 'device': {'Internal': '00:94:a2:7d:0f:a3'}, 'description': 'Using invalid cert', 'ts': 1789157427.0292294, 'metadata': {'danger': 'lowkey'}, 'peer_ip': '192.168.1.12', 'identity': {'name': 'nathan', 'source': 'hubspot'}, 'hash': 10764745265420991227}
-                    print("DUMMY: " + str(dummy))
-                    self.feeder.send("event", event)
-                    self.feeder.send("event", dummy)
+        for event in events:
+            if self.feeder is None:
+                log.info("event: %s", json.dumps(event))
+            else:
+                log.debug("sending event: %s", json.dumps(event))
+                self.feeder.send("event", event)
 
     # --------------------------------------------------------------- the work
 
     def process_drive(self, drive: Drive) -> int:
         """Fetch what changed in one drive and push it to Brain."""
-        with drive.lock:
-            items, drive.delta_link = self.client.delta(
-                drive.drive_id, drive.delta_link, max_pages=self.max_pages
-            )
-            if not items:
-                return 0
+        items, drive.delta_link = self.client.delta(
+            drive.drive_id, drive.delta_link, max_pages=self.max_pages
+        )
+        if not items:
+            return 0
 
-            self.stats["changes"] += len(items)
-            events = self.mapper.map_items(items, drive.as_metadata())
-            self.send(events)
-            return len(events)
+        self.stats["changes"] += len(items)
+        events = self.mapper.map_items(items, drive.as_metadata())
+        self.send(events)
+        return len(events)
 
     def authorized(self, notification: Dict[str, Any]) -> bool:
         """
@@ -246,11 +247,12 @@ class O365Feed:
 
     def handle_notifications(self, payload: Any) -> int:
         """Process one notification batch. Returns how many events were fed."""
-        notifications = None
-        if isinstance(payload, dict) and "value" in payload:
-            notifications = payload.get("value")
+        if isinstance(payload, dict):
+            notifications = payload.get("value") or []
         elif isinstance(payload, list):
             notifications = payload
+        else:
+            notifications = []
 
         self.stats["notifications"] += len(notifications)
 
@@ -319,19 +321,12 @@ class O365Feed:
         return app
 
     def serve_forever(self) -> None:
-        app = self.flask_app()
+        """threaded=False: one request at a time, so send() needs no lock."""
         host = self.conf.get("WEBHOOK_HOST") or "127.0.0.1"
         port = int(self.conf.get("WEBHOOK_PORT") or 8099)
 
-        try:
-            from waitress import serve
-
-            log.info("webhook listening on http://%s:%d%s (waitress)", host, port, self.webhook_path)
-            serve(app, host=host, port=port, threads=8, clear_untrusted_proxy_headers=True)
-        except ImportError:
-            log.warning("waitress not installed, falling back to the flask dev server")
-            log.info("webhook listening on http://%s:%d%s", host, port, self.webhook_path)
-            app.run(host=host, port=port, threaded=True)
+        log.info("webhook listening on http://%s:%d%s", host, port, self.webhook_path)
+        self.flask_app().run(host=host, port=port, threaded=False, use_reloader=False)
 
     # ----------------------------------------------------------- maintenance
 
@@ -427,6 +422,10 @@ class O365Feed:
             self.stop.wait(5.0)
 
     def start_threads(self) -> None:
+        """
+        Blocking, and slow on a large tenant - discovery walks every watched
+        user. Call it off the asyncio loop (see run()), never on it.
+        """
         threading.Thread(target=self.serve_forever, name="webserver", daemon=True).start()
 
         # the webserver has to be up before any subscription is created, or
@@ -449,18 +448,16 @@ class O365Feed:
         ).start()
 
 
-async def run(feed: O365Feed, dry_run: bool) -> None:
+async def run(feed: O365Feed) -> None:
     conf = feed.conf
 
-    if dry_run:
+    if feed.dry_run:
         log.warning("dry run: not registering with ghost, events will only be logged")
     else:
         feeder = Feeder(conf["COMPONENT_NAME"], conf["LISTEN_PORT"])
         await feeder.register(conf["COMPONENT_IP"], conf["GHOST_URL"], conf["COMPONENT_TOKEN"])
         feed.feeder = feeder
         log.info("registered feeder '%s' with ghost", conf["COMPONENT_NAME"])
-
-    feed.start_threads()
 
     loop = asyncio.get_running_loop()
     for sig in (signal.SIGINT, signal.SIGTERM):
@@ -469,7 +466,14 @@ async def run(feed: O365Feed, dry_run: bool) -> None:
         except NotImplementedError:
             pass
 
-    # Sending happens on the webserver threads, so this loop feeds nothing. It
+    # Off the loop, on purpose. Discovery and the stale-subscription sweep are
+    # blocking HTTP that can run for minutes on a large tenant, and the ZAP
+    # authenticator the SDK started during register() is an asyncio task on this
+    # loop. Running them here would leave Brain's CURVE handshake unanswered for
+    # that whole window, which looks exactly like a feeder that sends nothing.
+    await asyncio.to_thread(feed.start_threads)
+
+    # Sending happens on the webserver thread, so this loop feeds nothing. It
     # stays running because the SDK's curve authenticator is an asyncio task on
     # it - without a live loop Brain cannot authenticate to the socket.
     last_report = time.time()
@@ -531,7 +535,7 @@ def main() -> None:
         return
 
     try:
-        asyncio.run(run(feed, args.dry_run))
+        asyncio.run(run(feed))
     except KeyboardInterrupt:
         pass
     except Exception as e:

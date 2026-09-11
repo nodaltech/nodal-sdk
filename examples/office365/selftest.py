@@ -136,9 +136,9 @@ class FakeGraph:
         return app
 
     def serve(self) -> None:
-        from waitress import serve
-
-        serve(self.app, host="127.0.0.1", port=FAKE_PORT, threads=8)
+        # Threaded, unlike the feeder's own webserver: this stand-in gets hit by
+        # the feeder's webserver thread and its subscription thread at once.
+        self.app.run(host="127.0.0.1", port=FAKE_PORT, threaded=True, use_reloader=False)
 
 
 class RecordingFeeder:

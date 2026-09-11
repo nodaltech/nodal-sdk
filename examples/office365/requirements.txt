@@ -1,5 +1,4 @@
 # the SDK itself (pip install -e ../..) pulls in pyzmq / requests / numpy / pyyaml
 flask
-waitress
 requests
 pyyaml
