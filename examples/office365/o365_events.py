@@ -197,7 +197,7 @@ class EventMapper:
         event.set_metadata({k: str(v) for k, v in metadata.items() if v not in (None, "")})
 
         data = event.get_data()
-        data["device_ip"] = self.device_ip
+        data["peer_ip"] = self.device_ip
 
         # use Microsoft's timestamp, not ingestion time - notifications average
         # under a minute but can lag far longer, and events would otherwise

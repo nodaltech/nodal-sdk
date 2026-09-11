@@ -208,7 +208,11 @@ class O365Feed:
                 if self.feeder is None:
                     log.info("event: %s", json.dumps(event))
                 else:
+                    print("EVENT: " + str(event))
+                    dummy = {'event_id': '557a3473-6f9b-4c9c-b865-69341391db45', 'device': {'Internal': '00:94:a2:7d:0f:a3'}, 'description': 'Using invalid cert', 'ts': 1789157427.0292294, 'metadata': {'danger': 'lowkey'}, 'peer_ip': '192.168.1.12', 'identity': {'name': 'nathan', 'source': 'hubspot'}, 'hash': 10764745265420991227}
+                    print("DUMMY: " + str(dummy))
                     self.feeder.send("event", event)
+                    self.feeder.send("event", dummy)
 
     # --------------------------------------------------------------- the work
 
@@ -222,9 +226,7 @@ class O365Feed:
                 return 0
 
             self.stats["changes"] += len(items)
-            print(">> ITEMS: " + str(items))
             events = self.mapper.map_items(items, drive.as_metadata())
-            print(">> EVENTS: " + str(events))
             self.send(events)
             return len(events)
 
